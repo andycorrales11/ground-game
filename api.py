@@ -30,7 +30,7 @@ def get_players(limit: int | None = None):
     df = pd.read_parquet(_latest_parquet())
 
     df = df[[c for c in SAFE_COLS if c in df.columns]]
-
+    df = df.dropna(subset=["sleeper_id", "team"])
     if limit:
         df = df.head(limit)
 
