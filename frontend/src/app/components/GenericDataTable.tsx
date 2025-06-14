@@ -40,7 +40,7 @@ export default function GenericDataTable({ endpoint, title }: GenericDataTablePr
       {title && <h2 className="text-xl font-semibold mb-4">{title}</h2>}
       <table className="min-w-full table-auto border-collapse border border-gray-200">
         <thead>
-          <tr className="bg-gray-100">
+          <tr className="bg-gray-100 text-black">
             {columns.map((col) => (
               <th key={col} className="border px-4 py-2 text-left">
                 {col.replace(/_/g, ' ')}
@@ -50,7 +50,7 @@ export default function GenericDataTable({ endpoint, title }: GenericDataTablePr
         </thead>
         <tbody>
           {data.map((row, idx) => (
-            <tr key={idx} className="hover:bg-gray-50">
+            <tr key={idx} className="hover:bg-gray-600">
               {columns.map((col) => (
                 <td key={col} className="border px-4 py-2 text-sm">
                   {row[col] != null ? String(row[col]) : '-'}

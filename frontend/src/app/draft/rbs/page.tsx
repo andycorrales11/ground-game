@@ -6,8 +6,8 @@ export default function HomePage() {
     <main className="p-8">
       <Header />
       <GenericDataTable 
-        endpoint="/api/players/qbs?limit=100" 
-        title="2024 QB Stats" 
+        endpoint="/api/players/rbs?limit=100" 
+        title="2024 RB Stats" 
       />
     </main>
   );
