@@ -36,13 +36,13 @@ export default function GenericDataTable({ endpoint, title }: GenericDataTablePr
   const columns = Object.keys(data[0]);
 
   return (
-    <div className="overflow-x-auto p-4">
+    <div className="overflow-x-auto p-4 max-w-screen w-full">
       {title && <h2 className="text-xl font-semibold mb-4">{title}</h2>}
       <table className="min-w-full table-auto border-collapse border border-gray-200">
         <thead>
           <tr className="bg-gray-100 text-black">
             {columns.map((col) => (
-              <th key={col} className="border px-4 py-2 text-left">
+              <th key={col} className="border px-4 py-2 text-left text-transform: uppercase">
                 {col.replace(/_/g, ' ')}
               </th>
             ))}
