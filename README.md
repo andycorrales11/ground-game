@@ -9,7 +9,17 @@
 Columns:
 
 ```
-['sleeper_id', 'injury_notes', 'swish_id', 'first_name', 'age', 'injury_body_part', 'metadata', 'active', 'last_name', 'injury_start_date', 'stats_id', 'college', 'search_rank', 'number', 'player_id', 'fantasy_data_id', 'birth_city', 'status', 'high_school', 'birth_state', 'height', 'search_full_name', 'fantasy_positions', 'team_changed_at', 'competitions', 'rotowire_id', 'full_name', 'weight', 'rotoworld_id', 'gsis_id', 'news_updated', 'team', 'depth_chart_position', 'practice_description', 'birth_country', 'search_first_name', 'hashtag', 'practice_participation', 'yahoo_id', 'pandascore_id', 'injury_status', 'oddsjam_id', 'opta_id', 'position', 'search_last_name', 'sport', 'espn_id', 'birth_date', 'sportradar_id', 'years_exp', 'depth_chart_order', 'team_abbr', 'display_name']
+['sleeper_id', 'injury_notes', 'swish_id', 'first_name', 'age', 'injury_body_part',
+ 'metadata', 'active', 'last_name', 'injury_start_date', 'stats_id', 'college', 
+ 'search_rank', 'number', 'player_id', 'fantasy_data_id', 'birth_city', 'status',
+ 'high_school', 'birth_state', 'height', 'search_full_name', 'fantasy_positions', 
+ 'team_changed_at', 'competitions', 'rotowire_id', 'full_name', 'weight', 'rotoworld_id',
+ 'gsis_id', 'news_updated', 'team', 'depth_chart_position', 'practice_description', 
+ 'birth_country', 'search_first_name', 'hashtag', 'practice_participation', 'yahoo_id',
+ 'pandascore_id', 'injury_status', 'oddsjam_id', 'opta_id', 'position', 'search_last_name',
+ 'sport', 'espn_id', 'birth_date', 'sportradar_id', 'years_exp', 'depth_chart_order', 'team_abbr',
+ 'display_name']
+
 ```
 
 ---
@@ -38,8 +48,8 @@ rb_columns = ['player_id', 'season', 'season_type', 'carries', 'rushing_yards',
        'fantasy_points', 'fantasy_points_ppr']
 
 wr_columns = ['player_id', 'season', 'season_type', 'receptions', 
-        'targets' receiving_yards', 'receiving_tds', 'receiving_fumbles',   
-        'receiving_fumbles_lost', 'receiving_air_yards',
+       'targets' receiving_yards', 'receiving_tds', 'receiving_fumbles',   
+       'receiving_fumbles_lost', 'receiving_air_yards',
        'receiving_yards_after_catch', 'receiving_first_downs', 'receiving_epa',
        'receiving_2pt_conversions', 'racr', 'target_share', 'air_yards_share',
        'wopr_x', 'special_teams_tds', 'fantasy_points', 'fantasy_points_ppr',
