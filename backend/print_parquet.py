@@ -28,6 +28,7 @@ def print_parquet_file(folder: str, pos = "QB", format = "PPR") -> None:
     df = pd.read_parquet(latest_file)
 
     print(df.head(5))  # Print first 5 rows for brevity
+    print(df.columns.tolist())  # Print column names
 
 if __name__ == "__main__":
     import argparse

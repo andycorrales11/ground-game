@@ -3,6 +3,20 @@ from pathlib import Path
 from datetime import datetime, timezone
 import requests
 import pandas as pd
+"""
+Columns:
+['sleeper_id', 'injury_notes', 'swish_id', 'first_name', 'age', 
+'injury_body_part', 'metadata', 'active', 'last_name', 'injury_start_date',
+ 'stats_id', 'college', 'search_rank', 'number', 'player_id', 'fantasy_data_id',
+ 'birth_city', 'status', 'high_school', 'birth_state', 'height',
+'search_full_name', 'fantasy_positions', 'team_changed_at', 'competitions',
+'rotowire_id', 'full_name', 'weight', 'rotoworld_id', 'gsis_id', 'news_updated',
+ 'team', 'depth_chart_position', 'practice_description', 'birth_country',
+'search_first_name', 'hashtag', 'practice_participation', 'yahoo_id', 
+'pandascore_id', 'injury_status', 'oddsjam_id', 'opta_id', 'position', 
+'search_last_name', 'sport', 'espn_id', 'birth_date', 'sportradar_id', 
+'years_exp', 'depth_chart_order', 'team_abbr', 'display_name']
+"""
 
 BASE_URL = "https://api.sleeper.app/v1/players/nfl"
 OUT_DIR  = Path.cwd() / "data" / "sleeper_players"
@@ -25,6 +39,10 @@ def _persist(df: pd.DataFrame) -> Path:
     df.to_parquet(path, index=False)
     return path
 
+def _format_parquet(df: pd.DataFrame) -> pd.DataFrame:
+    df.dropna(subset=['gsis_id'], inplace=True)
+    df['display_name'] = df['first_name'] + ' ' + df['last_name']
+    return df
 
 def main(force: bool = False) -> None:
     today = datetime.now(timezone.utc).date()
@@ -34,6 +52,7 @@ def main(force: bool = False) -> None:
         return
 
     df   = _fetch()
+    df   = _format_parquet(df)
     path = _persist(df)
     print(f"[ok] Saved {len(df):,} rows ➜ {path}")
 
@@ -45,3 +64,4 @@ if __name__ == "__main__":
     ap.add_argument("--force", action="store_true",
                     help="Ignore existing copy and refetch")
     sys.exit(main(**vars(ap.parse_args())))
+    
