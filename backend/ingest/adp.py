@@ -4,6 +4,10 @@ from pathlib import Path
 
 DATA_DIR = Path.cwd() / "data"
 
+'''
+This script reads ADP (Average Draft Position) data from CSV files and attaches it to a DataFrame containing player information.
+It supports multiple formats (STD, HalfPPR, PPR) and merges the ADP data with the player DataFrame based on the player's display name
+'''
 # Read ADP files for different formats
 def _read_adp_csv(format: str) -> pd.DataFrame:
     """Read a CSV file into a DataFrame."""

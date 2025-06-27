@@ -2,16 +2,23 @@ import nfl_data_py as nfl
 import pandas as pd
 from pathlib import Path
 from stat_columns import player_columns, qb_columns, rb_columns, wr_columns
+'''
+This script processes NFL player statistics for a given season and saves the data in Parquet format.
+It retrieves seasonal data, filters players by position, and merges their stats with player information.
+The processed data is saved in a structured directory for easy access and analysis.
+'''
 
 OUT_DIR = Path.cwd() / "data" / "nfl_stats"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 PLAYERS_PATH = Path.cwd() / "data" / "sleeper_players"
 
+# Function to get the latest Sleeper players Parquet file
 def _latest_sleeper_parquet() -> Path:
     files = sorted(PLAYERS_PATH.glob("all_players_*.parquet"))
     return files[-1] if files else None
 
+# Function to process NFL statistics for a given season
 def _process(season: int = 2024) -> None:
     seasonal_data = nfl.import_seasonal_data([season])
     players = nfl.import_players()[player_columns].rename(columns={'gsis_id':'player_id'})
@@ -34,8 +41,5 @@ def _process(season: int = 2024) -> None:
         
 #   sleeper_players = pd.read_parquet(_latest_sleeper_parquet())
 
-def main(season: int = 2024) -> None:
-     _process(season)
-
 if __name__ == "__main__":
-    main()
+    _process(2024)
