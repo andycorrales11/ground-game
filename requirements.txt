@@ -3,3 +3,5 @@ requests
 pyarrow       # Parquet
 rich          # nice CLI output (optional)
 python-dotenv # if you’ll keep API keys in .env
+fastapi
+nfl_data_py
