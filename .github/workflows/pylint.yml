@@ -23,5 +23,3 @@ jobs:
         pylint $(git ls-files '*.py')
         pyling backend/*.py
         pylint backend/ingest/*.py
-        pylint backend/ml/*.py
-        pylint backend/services/*.py
