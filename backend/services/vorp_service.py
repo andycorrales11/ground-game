@@ -9,6 +9,9 @@ It uses the seasonal stats data and the amount of users in the league to compute
 
 default_roster_pos = ["QB","RB","RB","WR","WR","TE","FLEX","FLEX","K","DEF","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN"]
 
+def load_parquet() -> pd.DataFrame:
+    df = pd.read_parquet()
+    pass
 def calculate_vorp(df : pd.DataFrame, pos : str, teams = 12, format = 'STD') -> pd.DataFrame:
     pass
 

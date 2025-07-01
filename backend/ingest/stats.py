@@ -8,7 +8,7 @@ in a structured directory for easy access and analysis.
 from pathlib import Path
 import nfl_data_py as nfl
 # import pandas as pd
-from .stat_columns import player_columns, qb_columns, rb_columns, wr_columns
+from stat_columns import player_columns, qb_columns, rb_columns, wr_columns
 
 
 OUT_DIR = Path.cwd() / "data" / "nfl_stats"
