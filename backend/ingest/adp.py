@@ -31,7 +31,6 @@ def _attach_adp(df: pd.DataFrame, _format: str) -> pd.DataFrame:
         # Merge ADP data with the main DataFrame
         df = df.merge(adp_df[['display_name', 'ADP', 'pos_adp', 'avg_adp']],
                        on='display_name', how='left', suffixes=('', f'_{_format}'))
-        print(df.head(5))
         return df
     except FileNotFoundError as e:
         print(f"[error] ADP file not found for format {_format}: {e}")
@@ -43,15 +42,12 @@ def main() -> None:
     try:
         path = DATA_DIR / "sleeper_players/all_players_*.parquet"
         files = sorted(glob.glob(str(path)))
-        print(files)
         if not files:
             raise FileNotFoundError("No player data files found in the specified directory.")
         df = pd.read_parquet(files[-1])
         formats = ['STD', 'HalfPPR', 'PPR']
         for _format in formats:
             df = _attach_adp(df, _format)
-        print(df.columns.tolist())  # Print column names
-        print(df.head(5))  # Print first 5 rows for brevity
     except FileNotFoundError as e:
         print(f"[error] {e}")
 

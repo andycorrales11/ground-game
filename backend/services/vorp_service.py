@@ -25,7 +25,6 @@ def calculate_vorp(df : pd.DataFrame, pos : str, roster = default_roster_pos, te
     df["vorp"] = df[points_column] - baseline[points_column]
 
     return df
-    
 
 def calculate_vona(df : pd.DataFrame, pos : str, teams = 12, format = 'STD') -> pd.DataFrame:
     pass
