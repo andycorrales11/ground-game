@@ -30,25 +30,25 @@ def _process(season: int = 2024) -> None:
 
     qbs = players[players['position'] == 'QB']
     qbs = qbs.merge(seasonal_data[qb_columns], on='player_id', how='outer')
-    qbs = qbs.dropna(subset=['passing_yards'])
+    qbs = qbs.dropna(subset=['passing_yards', 'display_name'])
     qbs = qbs.sort_values(by='passing_yards', ascending=False)
     qbs.to_parquet(OUT_DIR / f"nfl_stats_qbs_{season}.parquet", index=False)
 
     rbs = players[players['position'] == 'RB']
     rbs = rbs.merge(seasonal_data[rb_columns], on='player_id', how='outer')
-    rbs = rbs.dropna(subset=['rushing_yards'])
+    rbs = rbs.dropna(subset=['rushing_yards', 'display_name'])
     rbs = rbs.sort_values(by='rushing_yards', ascending=False)
     rbs.to_parquet(OUT_DIR / f"nfl_stats_rbs_{season}.parquet", index=False)
 
     wrs = players[players['position'] == 'WR']
     wrs = wrs.merge(seasonal_data[wr_columns], on='player_id', how='outer')
-    wrs = wrs.dropna(subset=['receiving_yards'])
+    wrs = wrs.dropna(subset=['receiving_yards', 'display_name'])
     wrs = wrs.sort_values(by='receiving_yards', ascending=False)
     wrs.to_parquet(OUT_DIR / f"nfl_stats_wrs_{season}.parquet", index=False)
 
     tes = players[players['position'] == 'TE']
     tes = tes.merge(seasonal_data[wr_columns], on='player_id', how='outer')
-    tes = tes.dropna(subset=['receiving_yards'])
+    tes = tes.dropna(subset=['receiving_yards', 'display_name'])
     tes = tes.sort_values(by='receiving_yards', ascending=False)
     tes.to_parquet(OUT_DIR / f"nfl_stats_tes_{season}.parquet", index=False)
 
