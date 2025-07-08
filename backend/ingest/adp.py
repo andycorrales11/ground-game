@@ -51,11 +51,11 @@ def main() -> None:
             df = _attach_adp(df, _format)
             df.dropna(subset=["display_name", "ADP"])
             df.to_parquet(DATA_DIR / "players_adp" / f"{datetime.now(timezone.utc).date()}_adp")
-    except OSError as e:
-        print(f"[error] {e}")
     except ValueError as e:
         print(f"[error] {e}")
     except FileNotFoundError as e:
+        print(f"[error] {e}")
+    except OSError as e:
         print(f"[error] {e}")
 
 

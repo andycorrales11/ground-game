@@ -31,7 +31,8 @@ rb_columns = ['player_id', 'season', 'season_type', 'carries', 'rushing_yards',
     'rushing_first_downs', 'rushing_epa', 'rushing_2pt_conversions', 
     'fantasy_points', 'fantasy_points_ppr']
 
-wr_columns = ['player_id', 'season', 'season_type', 'receptions', 'targets', 'receiving_yards', 'receiving_tds',
+wr_columns = ['player_id', 'season', 'season_type', 'receptions', 'targets', 
+    'receiving_yards', 'receiving_tds',
     'receiving_fumbles', 'receiving_fumbles_lost', 'receiving_air_yards',
     'receiving_yards_after_catch', 'receiving_first_downs', 'receiving_epa',
     'receiving_2pt_conversions', 'racr', 'target_share', 'air_yards_share',

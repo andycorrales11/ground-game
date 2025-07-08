@@ -1,6 +1,7 @@
-import pandas as pd
+# Helper function
 from pathlib import Path
 import glob
+import pandas as pd
 
 DATA_DIR = Path.cwd() / "data"
 PLAYERS_DIR = DATA_DIR / "sleeper_players"
@@ -39,7 +40,7 @@ if __name__ == "__main__":
     parser.add_argument("folder", choices=["players", "stats", "adp"], help="Folder to read from")
     parser.add_argument("--pos", default="QB", help="Position for stats (default: QB)")
     parser.add_argument("--format", default="PPR", help="Format for ADP (default: PPR)")
-    
+
     args = parser.parse_args()
-    
+
     print_parquet_file(args.folder, args.pos, args.format)

@@ -10,8 +10,9 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 '''
 This script fetches the full player directory from the Sleeper API and saves it as a Parquet file.
-It includes functions to download the data, format it for Parquet storage, and persist it in a specified output directory.
-The player directory contains information about NFL players, including their IDs, names, and positions.
+It includes functions to download the data, format it for Parquet storage, and persist it 
+in a specified output directory. The player directory contains information about 
+NFL players, including their IDs, names, and positions.
 '''
 
 # Fetch the full player directory from Sleeper API and save it as a Parquet file.
