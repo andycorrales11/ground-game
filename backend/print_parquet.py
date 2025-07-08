@@ -14,7 +14,7 @@ def print_parquet_file(folder: str, pos = "QB", format = "PPR") -> None:
     elif folder == "stats":
         file_path = STATS_DIR / f"nfl_stats_{pos}*.parquet"
     elif folder == "adp":
-        file_path = ADP_DIR / f"FantasyPros_2025_{format}*.parquet"
+        file_path = ADP_DIR / f"FantasyPros_2025_{format}*.csv"
     else:
         raise ValueError("Invalid folder specified. Choose from 'players', 'stats', or 'adp'.")
     
@@ -25,7 +25,10 @@ def print_parquet_file(folder: str, pos = "QB", format = "PPR") -> None:
     latest_file = files[-1]  # Get the most recent file
     print(f"Reading from: {latest_file}")
     # Read the Parquet file(s)
-    df = pd.read_parquet(latest_file)
+    if folder == "adp":
+        df = pd.read_csv(latest_file)
+    else:
+        df = pd.read_parquet(latest_file)
 
     print(df.head(5))  # Print first 5 rows for brevity
     print(df.columns.tolist())  # Print column names

@@ -6,6 +6,7 @@ It supports multiple formats (STD, HalfPPR, PPR) and merges
 the ADP data with the player DataFrame based on the player's display name
 """
 from pathlib import Path
+from datetime import datetime, timezone
 import glob
 import pandas as pd
 
@@ -48,6 +49,12 @@ def main() -> None:
         formats = ['STD', 'HalfPPR', 'PPR']
         for _format in formats:
             df = _attach_adp(df, _format)
+            df.dropna(subset=["display_name", "ADP"])
+            df.to_parquet(DATA_DIR / "players_adp" / f"{datetime.now(timezone.utc).date()}_adp")
+    except OSError as e:
+        print(f"[error] {e}")
+    except ValueError as e:
+        print(f"[error] {e}")
     except FileNotFoundError as e:
         print(f"[error] {e}")
 

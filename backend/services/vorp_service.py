@@ -26,7 +26,9 @@ def calculate_vorp(df : pd.DataFrame, pos : str, roster = default_roster_pos, te
 
     return df
 
-def calculate_vona(df : pd.DataFrame, pos : str, teams = 12, format = 'STD') -> pd.DataFrame:
+def calculate_vona(df : pd.DataFrame, pos : str, pick : int, teams = 12, format = 'STD') -> pd.DataFrame:
+    df = df.sort_values(by=f"ADP_{format}")
+    next_available = df.head(pick + teams + 1).iloc[pick + teams] # this needs to be by position
     pass
 
 """
