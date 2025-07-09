@@ -34,8 +34,9 @@ def _persist(df: pd.DataFrame) -> Path:
 
 # Format the DataFrame for Parquet storage, ensuring required fields are present.
 def _format_parquet(df: pd.DataFrame) -> pd.DataFrame:
-    df.dropna(subset=['gsis_id'], inplace=True)
+    df = df.dropna(subset=['team'])
     df['display_name'] = df['first_name'] + ' ' + df['last_name']
+    df = df[['sleeper_id', 'gsis_id', 'active', 'college', 'number', 'position', 'age', 'team', 'display_name', 'first_name', 'last_name']]
     return df
 
 # Main function to fetch, format, and persist the player data.
@@ -47,6 +48,7 @@ def main(force: bool = False) -> None:
         return
 
     df   = _fetch()
+
     df   = _format_parquet(df)
     path = _persist(df)
     print(f"[ok] Saved {len(df):,} rows ➜ {path}")

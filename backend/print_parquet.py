@@ -16,6 +16,8 @@ def print_parquet_file(folder: str, pos = "QB", format = "PPR") -> None:
         file_path = STATS_DIR / f"nfl_stats_{pos}*.parquet"
     elif folder == "adp":
         file_path = ADP_DIR / f"FantasyPros_2025_{format}*.csv"
+    elif folder == "players_adp":
+        file_path = DATA_DIR / "players_adp" / "2025-07-09_adp.parquet"
     else:
         raise ValueError("Invalid folder specified. Choose from 'players', 'stats', or 'adp'.")
     
@@ -31,13 +33,13 @@ def print_parquet_file(folder: str, pos = "QB", format = "PPR") -> None:
     else:
         df = pd.read_parquet(latest_file)
 
-    print(df.head(5))  # Print first 5 rows for brevity
+    print(df.head(10))  # Print first 5 rows for brevity
     print(df.columns.tolist())  # Print column names
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Print contents of a Parquet file.")
-    parser.add_argument("folder", choices=["players", "stats", "adp"], help="Folder to read from")
+    parser.add_argument("folder", choices=["players", "stats", "adp", "players_adp"], help="Folder to read from")
     parser.add_argument("--pos", default="QB", help="Position for stats (default: QB)")
     parser.add_argument("--format", default="PPR", help="Format for ADP (default: PPR)")
 
