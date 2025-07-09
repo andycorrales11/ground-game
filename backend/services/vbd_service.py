@@ -2,9 +2,8 @@ import pandas as pd
 from pathlib import Path
 
 '''
-Value Over Replacement Player (VORP) Service
-This service calculates the VORP for NFL players based on their seasonal stats.
-It uses the seasonal stats data and the amount of users in the league to compute the VORP for each player.
+Value Based Drafting (VBD) Service
+This service calculates the VORP and VONA for NFL players based on their seasonal stats.
 '''
 
 default_roster_pos = ["QB","RB","RB","WR","WR","TE","FLEX","FLEX","K","DEF","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN"]
@@ -27,10 +26,16 @@ def calculate_vorp(df : pd.DataFrame, pos : str, roster = default_roster_pos, te
     return df
 
 def calculate_vona(df : pd.DataFrame, pos : str, pick : int, teams = 12, format = 'STD') -> pd.DataFrame:
-    df = df.sort_values(by=f"ADP_{format}")
-    next_available = df.head(pick + teams + 1).iloc[pick + teams] # this needs to be by position
-    pass
-
+    try:
+        df = df[df["position"] == pos]
+        df = df.sort_values(by=f"ADP_{format}")
+        next_available = df.head(pick + teams + 1).iloc[pick + teams]
+        pass
+    except KeyError as e:
+        print(f"[error] {e}")
+    except ValueError as e:
+        print(f"[error] {e}")
+    
 """
 Ex Baselines:
 QB: QB12
