@@ -32,7 +32,8 @@ def main():
     all_players = pd.read_parquet("data/players_adp/2025-07-09_adp.parquet")
     draft = Draft(all_players, 'STD', args.teams, args.rounds)
     team = Team()
-    for i in range(args.rounds):
+    i = 0
+    while i < args.rounds:
         print(f"Round {i + 1}:")
         sleep(.5)
         print("Best available left : ")
@@ -41,11 +42,17 @@ def main():
         sleep(1)
         pick = input("Pick player to draft (Name) : ")
         pos = draft.draft_player(pick)
-        print(f"Drafting {pick}, {pos}")
         sleep(1)
-        team.add_player(pick, pos)
+        try:
+            team.add_player(pick, pos)
+        except Exception as e:
+            print(f"[error] Invalid name")
+            continue
+        print(f"Drafting {pick}, {pos}")
+        sleep(2)
         print("Current Roster after pick: ")
         print(team.roster)
+        i += 1
 
 
 if __name__ == "__main__":
