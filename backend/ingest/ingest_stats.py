@@ -7,9 +7,20 @@ import pandas as pd
 from backend import config
 from .stat_columns import player_columns, qb_columns, rb_columns, wr_columns
 import logging
+import re
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
+
+def normalize_name(name: str) -> str:
+    """Normalizes player names for consistent matching."""
+    if not isinstance(name, str):
+        return name
+    name = name.lower()
+    name = name.replace("'", "") # Remove apostrophes
+    name = re.sub(r'[^a-z0-9\s]', '', name)  # Remove other non-alphanumeric except spaces
+    name = re.sub(r'(jr|sr|ii|iii|iv)$', '', name)  # Remove common suffixes at end
+    return name.strip()
 
 def process_position(df: pd.DataFrame, position: str, columns: list[str], sort_by: str, season: int):
     """
@@ -44,6 +55,7 @@ def main(season: int = 2024) -> None:
         
         logging.info("Importing player data...")
         players_df = nfl.import_players()[player_columns].rename(columns={'gsis_id': 'player_id'})
+        players_df['display_name'] = players_df['display_name'].apply(normalize_name) # Apply normalization here
 
         # 2. Define position-specific processing details
         positions_to_process = {

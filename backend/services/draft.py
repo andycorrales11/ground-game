@@ -7,12 +7,13 @@ class Draft:
     Manages the state of a fantasy football draft, including available players,
     drafted players, and draft settings.
     """
-    def __init__(self, players: pd.DataFrame, format: str = config.DEFAULT_DRAFT_FORMAT, teams: int = config.DEFAULT_TEAMS, rounds: int = config.DEFAULT_ROUNDS, roster: List[str] = config.DEFAULT_ROSTER):
+    def __init__(self, players: pd.DataFrame, format: str = config.DEFAULT_DRAFT_FORMAT, teams: int = config.DEFAULT_TEAMS, rounds: int = config.DEFAULT_ROUNDS, roster: List[str] = config.DEFAULT_ROSTER, order: str = 'snake'):
         self.players = players
         self.format = format
         self.teams = teams
         self.rounds = rounds
         self.roster = roster
+        self.order = order
         self.drafted_players: Set[str] = set()
 
     def get_available_players(self) -> pd.DataFrame:
@@ -72,3 +73,17 @@ class Team:
             if slot.startswith('BN') and self.roster[slot] is None:
                 self.roster[slot] = player
                 return
+
+    def get_positional_needs(self) -> List[str]:
+        """
+        Identifies unfilled positions on the roster.
+        """
+        needs = []
+        for pos in ['QB', 'RB', 'WR', 'TE', 'FLEX']:
+            # Check if all slots for this position are filled
+            slots_for_pos = [s for s in self.roster.keys() if s.startswith(pos)]
+            filled_slots = [s for s in slots_for_pos if self.roster[s] is not None]
+            
+            if len(filled_slots) < len(slots_for_pos):
+                needs.append(pos)
+        return needs

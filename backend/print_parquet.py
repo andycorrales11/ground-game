@@ -4,16 +4,17 @@ from backend import config
 
 def print_parquet_file(folder: str, pos = "QB", format = "PPR") -> None:
     """Print the contents of a Parquet file."""
+    file_path = None
     if folder == "players":
         file_path = config.PLAYERS_DIR / "all_players_*.parquet"
     elif folder == "stats":
         file_path = config.STATS_DIR / f"nfl_stats_{pos}*.parquet"
     elif folder == "adp":
-        file_path = config.ADP_DIR / f"FantasyPros_2025_{format}*.csv"
+        file_path = config.ADP_DIR / f"FantasyPros_2025_{format}*.parquet"
     elif folder == "players_adp":
-        file_path = config.PLAYER_ADP_DIR / "2025-07-09_adp.parquet"
+        file_path = config.PLAYER_ADP_DIR / "*_adp.parquet"
     else:
-        raise ValueError("Invalid folder specified. Choose from 'players', 'stats', or 'adp'.")
+        raise ValueError("Invalid folder specified. Choose from 'players', 'stats', 'adp', or 'players_adp'.")
     
     files = sorted(glob.glob(str(file_path)))
     if not files:
@@ -21,13 +22,10 @@ def print_parquet_file(folder: str, pos = "QB", format = "PPR") -> None:
         return
     latest_file = files[-1]  # Get the most recent file
     print(f"Reading from: {latest_file}")
-    # Read the Parquet file(s)
-    if folder == "adp":
-        df = pd.read_csv(latest_file)
-    else:
-        df = pd.read_parquet(latest_file)
+    
+    df = pd.read_parquet(latest_file)
 
-    print(df.head(10))  # Print first 5 rows for brevity
+    print(df.head(10))  # Print first 10 rows for brevity
     print(df.columns.tolist())  # Print column names
 
 if __name__ == "__main__":

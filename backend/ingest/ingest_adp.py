@@ -10,9 +10,20 @@ import glob
 import pandas as pd
 from backend import config
 import logging
+import re
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
+
+def normalize_name(name: str) -> str:
+    """Normalizes player names for consistent matching."""
+    if not isinstance(name, str):
+        return name
+    name = name.lower()
+    name = name.replace("'", "") # Remove apostrophes
+    name = re.sub(r'[^a-z0-9\s]', '', name)  # Remove other non-alphanumeric except spaces
+    name = re.sub(r'(jr|sr|ii|iii|iv)$', '', name)  # Remove common suffixes at end
+    return name.strip()
 
 def _read_adp_parquet(_format: str) -> pd.DataFrame | None:
     """Reads a single ADP parquet file, returning None if not found."""
@@ -39,6 +50,7 @@ def main() -> None:
         
         # 2. Select essential columns and remove duplicate players
         player_df = player_df[['display_name', 'team', 'position', 'age', 'sleeper_id', 'gsis_id']].drop_duplicates(subset=['display_name'])
+        player_df['display_name'] = player_df['display_name'].apply(normalize_name)
 
         # 3. Loop through formats and merge ADP data
         formats = ['STD', 'HalfPPR', 'PPR']
@@ -51,10 +63,11 @@ def main() -> None:
             
             # Process ADP dataframe
             adp_df['Rank'] = pd.to_numeric(adp_df['Rank'], errors='coerce')
+            adp_df['Player'] = adp_df['Player'].apply(normalize_name)
             
             # Rename columns to be format-specific for the merge
             adp_df = adp_df.rename(columns={
-                'Player': 'display_name',
+                'Player': 'display_name', # Now directly rename to display_name
                 'Rank': f'ADP_{_format}',
                 'POS': f'pos_adp_{_format}',
                 'AVG': f'avg_adp_{_format}'
@@ -64,7 +77,7 @@ def main() -> None:
             adp_cols_to_merge = ['display_name', f'ADP_{_format}', f'pos_adp_{_format}', f'avg_adp_{_format}']
             adp_df_to_merge = adp_df[adp_cols_to_merge]
 
-            # Merge ADP data into the main player DataFrame
+            # Merge ADP data into the main player DataFrame using the normalized name
             player_df = player_df.merge(adp_df_to_merge, on='display_name', how='left')
 
         # Clean up the final dataframe by dropping players without any ADP data
