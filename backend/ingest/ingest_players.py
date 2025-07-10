@@ -3,6 +3,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 import requests
 import pandas as pd
+from backend import config
 
 BASE_URL = "https://api.sleeper.app/v1/players/nfl"
 OUT_DIR  = Path.cwd() / "data" / "sleeper_players"
@@ -42,7 +43,7 @@ def _format_parquet(df: pd.DataFrame) -> pd.DataFrame:
 # Main function to fetch, format, and persist the player data.
 def main(force: bool = False) -> None:
     today = datetime.now(timezone.utc).date()
-    already = OUT_DIR / f"all_players_{today}.parquet"
+    already = config.PLAYERS_DIR / f"all_players_{today}.parquet"
     if already.exists() and not force:
         print(f"[info] Already cached: {already}")
         return

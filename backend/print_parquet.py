@@ -1,23 +1,17 @@
-# Helper function
-from pathlib import Path
 import glob
 import pandas as pd
-
-DATA_DIR = Path.cwd() / "data"
-PLAYERS_DIR = DATA_DIR / "sleeper_players"
-STATS_DIR = DATA_DIR / "nfl_stats"
-ADP_DIR = DATA_DIR / "fantasy_pros_adp"
+from backend import config
 
 def print_parquet_file(folder: str, pos = "QB", format = "PPR") -> None:
     """Print the contents of a Parquet file."""
     if folder == "players":
-        file_path = PLAYERS_DIR / "all_players_*.parquet"
+        file_path = config.PLAYERS_DIR / "all_players_*.parquet"
     elif folder == "stats":
-        file_path = STATS_DIR / f"nfl_stats_{pos}*.parquet"
+        file_path = config.STATS_DIR / f"nfl_stats_{pos}*.parquet"
     elif folder == "adp":
-        file_path = ADP_DIR / f"FantasyPros_2025_{format}*.csv"
+        file_path = config.ADP_DIR / f"FantasyPros_2025_{format}*.csv"
     elif folder == "players_adp":
-        file_path = DATA_DIR / "players_adp" / "2025-07-09_adp.parquet"
+        file_path = config.PLAYER_ADP_DIR / "2025-07-09_adp.parquet"
     else:
         raise ValueError("Invalid folder specified. Choose from 'players', 'stats', or 'adp'.")
     

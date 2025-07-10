@@ -1,58 +1,72 @@
-'''
-This script processes NFL player statistics for a given season and saves the 
-data in Parquet format. It retrieves seasonal data, filters players by position,
-and merges their stats with player information. The processed data is saved 
-in a structured directory for easy access and analysis.
-'''
-
-from pathlib import Path
+"""
+This script processes NFL player statistics for a given season, separates them by position,
+and saves the data into position-specific Parquet files.
+"""
 import nfl_data_py as nfl
-# import pandas as pd
+import pandas as pd
+from backend import config
 from .stat_columns import player_columns, qb_columns, rb_columns, wr_columns
+import logging
 
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 
-OUT_DIR = Path.cwd() / "data" / "nfl_stats"
-OUT_DIR.mkdir(parents=True, exist_ok=True)
+def process_position(df: pd.DataFrame, position: str, columns: list[str], sort_by: str, season: int):
+    """
+    Filters, processes, and saves data for a specific position.
+    """
+    logging.info(f"Processing stats for {position}s...")
+    
+    # Filter for position and merge with stats
+    pos_df = df[df['position'] == position].copy()
+    pos_df = pos_df.merge(seasonal_data[columns], on='player_id', how='inner')
+    
+    # Clean and sort data
+    pos_df.dropna(subset=[sort_by, 'display_name'], inplace=True)
+    pos_df.sort_values(by=sort_by, ascending=False, inplace=True)
+    
+    # Save to file
+    output_path = config.STATS_DIR / f"nfl_stats_{position.lower()}s_{season}.parquet"
+    pos_df.to_parquet(output_path, index=False)
+    logging.info(f"Saved {position} stats to {output_path}")
 
-PLAYERS_PATH = Path.cwd() / "data" / "sleeper_players"
+def main(season: int = 2024) -> None:
+    """
+    Main function to ingest and process seasonal NFL stats.
+    """
+    try:
+        config.STATS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Function to get the latest Sleeper players Parquet file
-"""
-def _latest_sleeper_parquet() -> Path:
-    files = sorted(PLAYERS_PATH.glob("all_players_*.parquet"))
-    return files[-1] if files else None
-"""
+        # 1. Import base data once
+        logging.info(f"Importing seasonal data for {season}...")
+        global seasonal_data
+        seasonal_data = nfl.import_seasonal_data([season])
+        
+        logging.info("Importing player data...")
+        players_df = nfl.import_players()[player_columns].rename(columns={'gsis_id': 'player_id'})
 
-# Function to process NFL statistics for a given season
-def _process(season: int = 2024) -> None:
-    seasonal_data = nfl.import_seasonal_data([season])
-    players = nfl.import_players()[player_columns].rename(columns={'gsis_id':'player_id'})
+        # 2. Define position-specific processing details
+        positions_to_process = {
+            'QB': {'cols': qb_columns, 'sort': 'passing_yards'},
+            'RB': {'cols': rb_columns, 'sort': 'rushing_yards'},
+            'WR': {'cols': wr_columns, 'sort': 'receiving_yards'},
+            'TE': {'cols': wr_columns, 'sort': 'receiving_yards'} # TEs use WR columns
+        }
 
-    qbs = players[players['position'] == 'QB']
-    qbs = qbs.merge(seasonal_data[qb_columns], on='player_id', how='outer')
-    qbs = qbs.dropna(subset=['passing_yards', 'display_name'])
-    qbs = qbs.sort_values(by='passing_yards', ascending=False)
-    qbs.to_parquet(OUT_DIR / f"nfl_stats_qbs_{season}.parquet", index=False)
+        # 3. Loop and process each position
+        for position, details in positions_to_process.items():
+            process_position(
+                df=players_df,
+                position=position,
+                columns=details['cols'],
+                sort_by=details['sort'],
+                season=season
+            )
 
-    rbs = players[players['position'] == 'RB']
-    rbs = rbs.merge(seasonal_data[rb_columns], on='player_id', how='outer')
-    rbs = rbs.dropna(subset=['rushing_yards', 'display_name'])
-    rbs = rbs.sort_values(by='rushing_yards', ascending=False)
-    rbs.to_parquet(OUT_DIR / f"nfl_stats_rbs_{season}.parquet", index=False)
+        logging.info("All positions processed successfully.")
 
-    wrs = players[players['position'] == 'WR']
-    wrs = wrs.merge(seasonal_data[wr_columns], on='player_id', how='outer')
-    wrs = wrs.dropna(subset=['receiving_yards', 'display_name'])
-    wrs = wrs.sort_values(by='receiving_yards', ascending=False)
-    wrs.to_parquet(OUT_DIR / f"nfl_stats_wrs_{season}.parquet", index=False)
-
-    tes = players[players['position'] == 'TE']
-    tes = tes.merge(seasonal_data[wr_columns], on='player_id', how='outer')
-    tes = tes.dropna(subset=['receiving_yards', 'display_name'])
-    tes = tes.sort_values(by='receiving_yards', ascending=False)
-    tes.to_parquet(OUT_DIR / f"nfl_stats_tes_{season}.parquet", index=False)
-
-#   sleeper_players = pd.read_parquet(_latest_sleeper_parquet())
+    except Exception as e:
+        logging.error(f"An unexpected error occurred in ingest_stats: {e}")
 
 if __name__ == "__main__":
-    _process(2024)
+    main(2024)

@@ -1,14 +1,12 @@
 import pandas as pd
-from pathlib import Path
+from backend import config
 
 '''
 Value Based Drafting (VBD) Service
 This service calculates the VORP and VONA for NFL players based on their seasonal stats.
 '''
 
-default_roster_pos = ["QB","RB","RB","WR","WR","TE","FLEX","FLEX","K","DEF","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN"]
-
-def calculate_vorp(df : pd.DataFrame, pos : str, roster = default_roster_pos, teams = 12, format = 'STD' ) -> pd.DataFrame:
+def calculate_vorp(df : pd.DataFrame, pos : str, roster = config.DEFAULT_ROSTER_POS, teams = config.DEFAULT_TEAMS, format = config.DEFAULT_DRAFT_FORMAT ) -> pd.DataFrame:
     replacement_index = roster.count(pos) * teams
     match format:
         case 'HalfPPR':
@@ -25,7 +23,7 @@ def calculate_vorp(df : pd.DataFrame, pos : str, roster = default_roster_pos, te
 
     return df
 
-def calculate_vona(df : pd.DataFrame, pos : str, pick : int, teams = 12, format = 'STD') -> pd.DataFrame:
+def calculate_vona(df : pd.DataFrame, pos : str, pick : int, teams = config.DEFAULT_TEAMS, format = config.DEFAULT_DRAFT_FORMAT) -> pd.DataFrame:
     try:
         df = df[df["position"] == pos]
         df = df.sort_values(by=f"ADP_{format}")
@@ -44,3 +42,4 @@ WR: WR24 + Flex (16/24) = WR40
 TE: TE12
 Flex: RB32 / WR40
 """
+

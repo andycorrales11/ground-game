@@ -1,55 +1,74 @@
 import pandas as pd
-from typing import List, Dict
-
-default_roster = ["QB1","RB1","RB2","WR1","WR2","TE1","FLEX1","FLEX2","K","DEF","BN1","BN2","BN3","BN4","BN5","BN6","BN6","BN6","BN7","BN8"]
-
-# test = pd.DataFrame({'display_name' : ['Tom Brady', 'Patrick Mahomes', 'Tua Tagovailoa']})
+from typing import List, Dict, Set
+from backend import config
 
 class Draft:
-    def __init__(self, players : pd.DataFrame, format : str = 'STD', teams : int = 12, rounds : int = 20, roster : List[str] = default_roster):
+    """
+    Manages the state of a fantasy football draft, including available players,
+    drafted players, and draft settings.
+    """
+    def __init__(self, players: pd.DataFrame, format: str = config.DEFAULT_DRAFT_FORMAT, teams: int = config.DEFAULT_TEAMS, rounds: int = config.DEFAULT_ROUNDS, roster: List[str] = config.DEFAULT_ROSTER):
         self.players = players
         self.format = format
         self.teams = teams
         self.rounds = rounds
         self.roster = roster
+        self.drafted_players: Set[str] = set()
 
-    def draft_player(self, player : str) -> str:
-        mask = self.players['display_name'] == player
-        player_row = self.players[mask]
+    def get_available_players(self) -> pd.DataFrame:
+        """
+        Returns a DataFrame of players who have not yet been drafted.
+        """
+        return self.players[~self.players['display_name'].isin(self.drafted_players)]
+
+    def draft_player(self, player_name: str) -> str | None:
+        """
+        Marks a player as drafted.
+
+        Args:
+            player_name: The display name of the player to draft.
+
+        Returns:
+            The position of the drafted player if successful, otherwise None.
+        """
+        if player_name in self.drafted_players:
+            return None  # Player already drafted
+
+        player_row = self.players[self.players['display_name'] == player_name]
+        
         if not player_row.empty:
             position = player_row.iloc[0]['position']
-            self.players = self.players[~mask]
+            self.drafted_players.add(player_name)
             return position
-        return None
+            
+        return None # Player not found
 
 class Team:
-    def __init__(self, roster : List[str] = default_roster):
-        self.roster = Dict.fromkeys(roster)
+    """
+    Represents a single team in the fantasy draft, managing its roster.
+    """
+    def __init__(self, roster: List[str] = config.DEFAULT_ROSTER):
+        self.roster: Dict[str, str | None] = {slot: None for slot in roster}
     
-    def add_player(self, player : str, pos : str):
+    def add_player(self, player: str, pos: str):
+        """
+        Adds a player to the first available roster slot for their position.
+        """
+        # Find a position-specific slot first
         for slot in self.roster:
-            if slot.startswith(pos) and self.roster.get(slot) is None:
+            if slot.startswith(pos) and self.roster[slot] is None:
                 self.roster[slot] = player
-                break
-            elif pos == ('WR' or 'RB' or 'TE') and slot.startswith('FLEX') and self.roster.get(slot) is None:
+                return
+
+        # If no position-specific slot, try a FLEX spot for eligible positions
+        if pos in ('WR', 'RB', 'TE'):
+            for slot in self.roster:
+                if slot.startswith('FLEX') and self.roster[slot] is None:
+                    self.roster[slot] = player
+                    return
+        
+        # If still no slot, place them on the bench
+        for slot in self.roster:
+            if slot.startswith('BN') and self.roster[slot] is None:
                 self.roster[slot] = player
-                break
-            elif slot.startswith('BN'):
-                self.roster[slot] = player
-                break
-
-
-
-# draft = Draft(test)
-# print(draft.players)
-# draft.draft_player('Tom Brady')
-# print(draft.players)
-
-# team = Team()
-# team.add_player('Tyreek Hill', 'WR')
-# team.add_player('Tua Tagovailoa', 'QB')
-# team.add_player('Jaylen Waddle', 'WR')
-# team.add_player('Quinn Ewers', 'QB')
-# team.add_player('Malik Nabers', 'WR')
-
-# print(team.roster)
+                return
