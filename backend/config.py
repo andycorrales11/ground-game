@@ -25,3 +25,11 @@ DEFAULT_ROSTER_POS: List[str] = [
 DEFAULT_TEAMS: int = 12
 DEFAULT_ROUNDS: int = 20
 DEFAULT_DRAFT_FORMAT: str = 'STD'
+
+# VORP positional adjustments
+POSITION_ADJUSTMENT: dict = {
+    "QB": 0.8,
+    "RB": 1.0,
+    "WR": 1.0,
+    "TE": 1.0
+}

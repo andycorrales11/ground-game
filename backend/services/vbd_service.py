@@ -59,11 +59,12 @@ def calculate_vorp(
     else:
         replacement_value = 0 # No replacement player found, so VORP is just their score
 
-    # Calculate VORP for the position
-    df_pos['VORP_pos'] = df_pos[points_column] - replacement_value
+    # Calculate VORP for the position, applying the positional adjustment
+    adjustment_factor = config.POSITION_ADJUSTMENT.get(position, 1.0)
+    df_pos['VORP_pos'] = (df_pos[points_column] - replacement_value) * adjustment_factor
     
     # Update the main DataFrame's VORP column for the specific position
-    df.update(df_pos[['VORP_pos']].rename(columns={'VORP_pos': 'VORP'}))
+    df.loc[df_pos.index, 'VORP'] = df_pos['VORP_pos']
     
     return df
 

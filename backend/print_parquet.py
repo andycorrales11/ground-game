@@ -2,8 +2,8 @@ import glob
 import pandas as pd
 from backend import config
 
-def print_parquet_file(folder: str, pos = "QB", format = "PPR") -> None:
-    """Print the contents of a Parquet file."""
+def print_parquet_file(folder: str, pos: str = "QB", format: str = "PPR", player_name: str = None) -> None:
+    """Print the contents of a Parquet file, optionally filtering by player name."""
     file_path = None
     if folder == "players":
         file_path = config.PLAYERS_DIR / "all_players_*.parquet"
@@ -25,8 +25,17 @@ def print_parquet_file(folder: str, pos = "QB", format = "PPR") -> None:
     
     df = pd.read_parquet(latest_file)
 
-    print(df.head(10))  # Print first 10 rows for brevity
-    print(df.columns.tolist())  # Print column names
+    if player_name:
+        # Filter by player name if provided
+        filtered_df = df[df['display_name'].str.contains(player_name, case=False, na=False)]
+        if not filtered_df.empty:
+            print(filtered_df)
+        else:
+            print(f"No player found with the name '{player_name}'.")
+    else:
+        print(df.head(10))  # Print first 10 rows for brevity
+    
+    print("\nColumns:", df.columns.tolist())  # Print column names
 
 if __name__ == "__main__":
     import argparse
@@ -34,7 +43,8 @@ if __name__ == "__main__":
     parser.add_argument("folder", choices=["players", "stats", "adp", "players_adp"], help="Folder to read from")
     parser.add_argument("--pos", default="QB", help="Position for stats (default: QB)")
     parser.add_argument("--format", default="PPR", help="Format for ADP (default: PPR)")
+    parser.add_argument("--name", help="Filter by player name (case-insensitive)")
 
     args = parser.parse_args()
 
-    print_parquet_file(args.folder, args.pos, args.format)
+    print_parquet_file(args.folder, args.pos, args.format, player_name=args.name)
