@@ -1,29 +1,25 @@
-import glob
 import pandas as pd
-from backend import config
+from backend.services import data_service
 
-def print_parquet_file(folder: str, pos: str = "QB", format: str = "PPR", player_name: str = None) -> None:
+def print_parquet_file(folder: str, pos: str = "QB", format: str = "PPR", player_name: str = None, season: int = 2024) -> None:
     """Print the contents of a Parquet file, optionally filtering by player name."""
-    file_path = None
+    df = None
+    print(f"Attempting to load data for folder: '{folder}'")
+
     if folder == "players":
-        file_path = config.PLAYERS_DIR / "all_players_*.parquet"
+        df = data_service.load_all_players()
     elif folder == "stats":
-        file_path = config.STATS_DIR / f"nfl_stats_{pos}*.parquet"
+        df = data_service.load_stats_data(pos, season)
     elif folder == "adp":
-        file_path = config.ADP_DIR / f"FantasyPros_2025_{format}*.parquet"
+        df = data_service.load_raw_adp_data(format)
     elif folder == "players_adp":
-        file_path = config.PLAYER_ADP_DIR / "*_adp.parquet"
+        df = data_service.load_adp_data()
     else:
         raise ValueError("Invalid folder specified. Choose from 'players', 'stats', 'adp', or 'players_adp'.")
-    
-    files = sorted(glob.glob(str(file_path)))
-    if not files:
-        print(f"No files found in {folder} matching the pattern {file_path}.")
+
+    if df is None:
+        print(f"No data found for the specified criteria.")
         return
-    latest_file = files[-1]  # Get the most recent file
-    print(f"Reading from: {latest_file}")
-    
-    df = pd.read_parquet(latest_file)
 
     if player_name:
         # Filter by player name if provided
@@ -44,7 +40,9 @@ if __name__ == "__main__":
     parser.add_argument("--pos", default="QB", help="Position for stats (default: QB)")
     parser.add_argument("--format", default="PPR", help="Format for ADP (default: PPR)")
     parser.add_argument("--name", help="Filter by player name (case-insensitive)")
+    parser.add_argument("--season", type=int, default=2024, help="Season for stats (default: 2024)")
 
     args = parser.parse_args()
 
-    print_parquet_file(args.folder, args.pos, args.format, player_name=args.name)
+    print_parquet_file(args.folder, args.pos, args.format, player_name=args.name, season=args.season)
+

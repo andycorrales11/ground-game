@@ -1,8 +1,7 @@
 import pandas as pd
 from backend import config
+from backend.services import data_service
 import logging
-import glob
-import os
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
@@ -79,32 +78,18 @@ def create_vbd_big_board(season: int = 2024, format: str = config.DEFAULT_DRAFT_
     all_players_df = pd.DataFrame()
 
     # Load ADP data
-    adp_df = pd.DataFrame()
-    try:
-        adp_files = glob.glob(str(config.PLAYER_ADP_DIR / "*_adp.parquet"))
-        if adp_files:
-            latest_adp_file = max(adp_files, key=os.path.getctime)
-            adp_df = pd.read_parquet(latest_adp_file)
-    except FileNotFoundError:
-        logging.warning("ADP data file not found. Continuing without ADP.")
-    except Exception as e:
-        logging.error(f"Error loading ADP data: {e}")
+    adp_df = data_service.load_adp_data()
+    if adp_df is None:
+        adp_df = pd.DataFrame() # Ensure adp_df is a DataFrame
 
     for position in ['QB', 'RB', 'WR', 'TE']:
-        try:
-            stats_path = config.STATS_DIR / f"nfl_stats_{position.lower()}s_{season}.parquet"
-            pos_df = pd.read_parquet(stats_path)
-            # Debug: Check Achane in pos_df
-            achane_in_pos_df = pos_df[pos_df['display_name'].str.contains('achane', na=False, case=False)]
-            if not achane_in_pos_df.empty:
-                logging.debug(f"Achane in {position} pos_df:\n{achane_in_pos_df[['display_name']]}")
-            
+        pos_df = data_service.load_stats_data(position, season)
+        if pos_df is not None:
             # Calculate VORP and VONA
             pos_vorp_df = calculate_vorp(pos_df, position, teams, format)
             
             all_players_df = pd.concat([all_players_df, pos_vorp_df], ignore_index=True)
-
-        except FileNotFoundError:
+        else:
             logging.warning(f"Stats file not found for {position}s in season {season}. Skipping.")
             continue
 
