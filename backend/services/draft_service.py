@@ -44,7 +44,7 @@ def calculate_draft_score(players: pd.DataFrame) -> pd.DataFrame:
         # Fill missing ADP with a high number to rank them lower
         players['adp_rank'] = players['ADP'].fillna(999).rank(ascending=True, na_option='bottom')
         # Blend the two ranks, giving more weight to ADP
-        players['draft_score'] = (0.3 * players['vorp_rank']) + (0.7 * players['adp_rank'])
+        players['draft_score'] = (0.10 * players['vorp_rank']) + (0.90 * players['adp_rank'])
     else:
         # If no ADP data, the score is just the VORP rank
         players['draft_score'] = players['vorp_rank']
@@ -96,7 +96,7 @@ def simulate_cpu_pick(available_players: pd.DataFrame, team: Team) -> str:
     choices = top_10['display_name'].tolist()
     
     # Probabilities favor the top-ranked players more heavily.
-    probabilities = [0.40, 0.25, 0.15, 0.10, 0.05, 0.02, 0.01, 0.01, 0.005, 0.005]
+    probabilities = [0.60, 0.20, 0.10, 0.05, 0.02, 0.01, 0.005, 0.005, 0.005, 0.005]
     
     # Adjust probabilities if fewer than 10 players are available
     if len(choices) < len(probabilities):
