@@ -135,6 +135,9 @@ def run_draft_simulation(draft: Draft, teams_list: list[Team], user_pick_number:
                     ascending_order = True if sort_col == 'ADP' else False
                     
                     if not filtered_board.empty:
+                        if sort_col not in filtered_board.columns:
+                            sort_col = 'VORP'
+                            ascending_order = False
                         print(filtered_board.sort_values(by=sort_col, ascending=ascending_order).head(15)[existing_display_cols])
                     else:
                         print("No players available for the current filter.")

@@ -93,29 +93,14 @@ def create_vbd_big_board(season: int = 2024, format: str = config.DEFAULT_DRAFT_
             logging.warning(f"Stats file not found for {position}s in season {season}. Skipping.")
             continue
 
-    # Debug: Check Achane in all_players_df before ADP merge
-    achane_before_adp = all_players_df[all_players_df['display_name'].str.contains('achane', na=False, case=False)]
-    if not achane_before_adp.empty:
-        logging.debug(f"Achane in all_players_df before ADP merge:\n{achane_before_adp[['display_name']]}")
-
-    # Merge ADP data if available
+    # Merge ADP data
     if not adp_df.empty:
-        # Debug: Check Achane in adp_df
-        achane_in_adp_df = adp_df[adp_df['display_name'].str.contains('achane', na=False, case=False)]
-        if not achane_in_adp_df.empty:
-            logging.debug(f"Achane in adp_df:\n{achane_in_adp_df[['display_name', f'ADP_{format}']]}")
-
-        adp_col = f'ADP_{format}'
-        if adp_col in adp_df.columns:
-            all_players_df = all_players_df.merge(adp_df[['display_name', adp_col]], on='display_name', how='left')
-            all_players_df.rename(columns={adp_col: 'ADP'}, inplace=True)
+        adp_column_name = f"ADP_{format.upper()}"
+        if adp_column_name in adp_df.columns:
+            all_players_df = pd.merge(all_players_df, adp_df[['display_name', adp_column_name]], on='display_name', how='left')
+            all_players_df.rename(columns={adp_column_name: 'ADP'}, inplace=True)
         else:
-            logging.warning(f"ADP column for format '{format}' not found.")
-
-    # Debug: Check Achane in all_players_df after ADP merge
-    achane_after_adp = all_players_df[all_players_df['display_name'].str.contains('achane', na=False, case=False)]
-    if not achane_after_adp.empty:
-        logging.debug(f"Achane in all_players_df after ADP merge:\n{achane_after_adp[['display_name', 'ADP']]}")
+            logging.warning(f"ADP column '{adp_column_name}' not found in ADP data. Skipping ADP merge.")
 
     # Sort the final big board by VORP
     all_players_df.sort_values(by='VORP', ascending=False, inplace=True)

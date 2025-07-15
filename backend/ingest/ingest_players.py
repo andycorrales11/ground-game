@@ -52,7 +52,7 @@ def main(force: bool = False) -> None:
 
     df   = _format_parquet(df)
     path = _persist(df)
-    print(f"[ok] Saved {len(df):,} rows ➜ {path}")
+    print(f"[ok] Saved {len(df):,} rows to {path}")
 
 
 if __name__ == "__main__":
