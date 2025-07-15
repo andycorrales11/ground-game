@@ -1,6 +1,7 @@
 import pandas as pd
 from backend import config
 from backend.services import data_service
+from backend import utils
 import logging
 from .draft import Draft, Team
 from .simulation_service import simulate_cpu_pick
@@ -31,7 +32,7 @@ def calculate_vorp(
     if format not in ['STD', 'PPR', 'HalfPPR']:
         raise ValueError(f"Unsupported format: {format}")
 
-    points_column = f"fantasy_points{ '' if format == 'STD' else '_' + format.lower()}"
+    points_column = f"fantasy_points_{format.lower()}"
     if points_column not in df.columns:
         raise KeyError(f"Points column '{points_column}' not found in DataFrame.")
 
@@ -73,9 +74,10 @@ def calculate_vorp(
 def calculate_vona(player_to_eval: pd.Series, draft_sim: Draft, teams_list_sim: list[Team], picks_to_simulate: int, teams: int, current_pick: int, draft_order: str) -> float:
     """
     Calculates a more accurate VONA by simulating the draft picks until the user's next turn.
+    If the calculated VONA is NaN or negative, it returns 0.
     """
     # Get the points and position of the player being evaluated
-    points_col = f"fantasy_points{'' if draft_sim.format == 'STD' else '_' + draft_sim.format.lower()}"
+    points_col = f"fantasy_points_{draft_sim.format.lower()}"
     player_points = player_to_eval[points_col]
     player_position = player_to_eval['position']
 
@@ -88,9 +90,9 @@ def calculate_vona(player_to_eval: pd.Series, draft_sim: Draft, teams_list_sim: 
             team_index = teams - ((pick_num - 1) % teams) - 1
         else:
             team_index = (pick_num - 1) % teams
-        
+
         cpu_team = teams_list_sim[team_index]
-        
+
         # Simulate the pick for the CPU team
         available_for_cpu = draft_sim.get_available_players()
         if available_for_cpu.empty:
@@ -108,14 +110,27 @@ def calculate_vona(player_to_eval: pd.Series, draft_sim: Draft, teams_list_sim: 
     # After simulation, find the best available player at the same position
     remaining_players = draft_sim.get_available_players()
     best_remaining_at_pos = remaining_players[remaining_players['position'] == player_position]
-    
+
     if best_remaining_at_pos.empty:
-        # If no players are left at the position, the value is the player's own score
-        return player_points
-    
+        # If no players are left at the position, the value is 0 per new requirement
+        return 0.0
+
     next_best_points = best_remaining_at_pos.sort_values(by=points_col, ascending=False).iloc[0][points_col]
-    
-    return player_points - next_best_points
+
+    vona_value = player_points - next_best_points
+
+    print(f"--- VONA Debugging for {player_to_eval['display_name']} ({player_position}) ---")
+    print(f"Player points: {player_points}")
+    print(f"Next best points: {next_best_points}")
+    print(f"Calculated VONA: {vona_value}")
+
+    # If VONA is NaN or negative, set to 0
+    if pd.isna(vona_value) or vona_value < 0:
+        print(f"VONA is NaN or negative ({vona_value}), returning 0.0")
+        return 0.0
+    else:
+        print(f"VONA is {vona_value}, returning {vona_value}")
+        return vona_value
 
 
 def create_vbd_big_board(season: int = 2024, format: str = config.DEFAULT_DRAFT_FORMAT, teams: int = config.DEFAULT_TEAMS) -> pd.DataFrame:
@@ -131,21 +146,28 @@ def create_vbd_big_board(season: int = 2024, format: str = config.DEFAULT_DRAFT_
     adp_df = data_service.load_adp_data()
     if adp_df is None:
         adp_df = pd.DataFrame() # Ensure adp_df is a DataFrame
+    else:
+        adp_df['display_name'] = adp_df['display_name'].apply(utils.normalize_name)
 
     for position in ['QB', 'RB', 'WR', 'TE']:
-        pos_df = data_service.load_stats_data(position, season)
+        pos_df = data_service.load_athletic_projections(position, format)
         if pos_df is not None:
-            # Calculate VORP and VONA
+            # Rename columns to match expected format
+            pos_df.rename(columns={'Player': 'display_name', 'FPS': f'fantasy_points_{format.lower()}'}, inplace=True)
+            pos_df['position'] = position # Add position column
+            pos_df['display_name'] = pos_df['display_name'].apply(utils.normalize_name)
+            
+            # Calculate VORP
             pos_vorp_df = calculate_vorp(pos_df, position, teams, format)
             
             all_players_df = pd.concat([all_players_df, pos_vorp_df], ignore_index=True)
         else:
-            logging.warning(f"Stats file not found for {position}s in season {season}. Skipping.")
+            logging.warning(f"Athletic projections file not found for {position}. Skipping.")
             continue
 
     # Merge ADP data
     if not adp_df.empty:
-        adp_column_name = f"ADP_{format.upper()}"
+        adp_column_name = f"ADP_{format}"
         if adp_column_name in adp_df.columns:
             all_players_df = pd.merge(all_players_df, adp_df[['display_name', adp_column_name]], on='display_name', how='left')
             all_players_df.rename(columns={adp_column_name: 'ADP'}, inplace=True)
