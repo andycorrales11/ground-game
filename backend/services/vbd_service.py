@@ -1,8 +1,7 @@
 import pandas as pd
 from backend import config
+from backend.services import data_service
 import logging
-import glob
-import os
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
@@ -59,11 +58,12 @@ def calculate_vorp(
     else:
         replacement_value = 0 # No replacement player found, so VORP is just their score
 
-    # Calculate VORP for the position
-    df_pos['VORP_pos'] = df_pos[points_column] - replacement_value
+    # Calculate VORP for the position, applying the positional adjustment
+    adjustment_factor = config.POSITION_ADJUSTMENT.get(position, 1.0)
+    df_pos['VORP_pos'] = (df_pos[points_column] - replacement_value) * adjustment_factor
     
     # Update the main DataFrame's VORP column for the specific position
-    df.update(df_pos[['VORP_pos']].rename(columns={'VORP_pos': 'VORP'}))
+    df.loc[df_pos.index, 'VORP'] = df_pos['VORP_pos']
     
     return df
 
@@ -78,58 +78,29 @@ def create_vbd_big_board(season: int = 2024, format: str = config.DEFAULT_DRAFT_
     all_players_df = pd.DataFrame()
 
     # Load ADP data
-    adp_df = pd.DataFrame()
-    try:
-        adp_files = glob.glob(str(config.PLAYER_ADP_DIR / "*_adp.parquet"))
-        if adp_files:
-            latest_adp_file = max(adp_files, key=os.path.getctime)
-            adp_df = pd.read_parquet(latest_adp_file)
-    except FileNotFoundError:
-        logging.warning("ADP data file not found. Continuing without ADP.")
-    except Exception as e:
-        logging.error(f"Error loading ADP data: {e}")
+    adp_df = data_service.load_adp_data()
+    if adp_df is None:
+        adp_df = pd.DataFrame() # Ensure adp_df is a DataFrame
 
     for position in ['QB', 'RB', 'WR', 'TE']:
-        try:
-            stats_path = config.STATS_DIR / f"nfl_stats_{position.lower()}s_{season}.parquet"
-            pos_df = pd.read_parquet(stats_path)
-            # Debug: Check Achane in pos_df
-            achane_in_pos_df = pos_df[pos_df['display_name'].str.contains('achane', na=False, case=False)]
-            if not achane_in_pos_df.empty:
-                logging.debug(f"Achane in {position} pos_df:\n{achane_in_pos_df[['display_name']]}")
-            
+        pos_df = data_service.load_stats_data(position, season)
+        if pos_df is not None:
             # Calculate VORP and VONA
             pos_vorp_df = calculate_vorp(pos_df, position, teams, format)
             
             all_players_df = pd.concat([all_players_df, pos_vorp_df], ignore_index=True)
-
-        except FileNotFoundError:
+        else:
             logging.warning(f"Stats file not found for {position}s in season {season}. Skipping.")
             continue
 
-    # Debug: Check Achane in all_players_df before ADP merge
-    achane_before_adp = all_players_df[all_players_df['display_name'].str.contains('achane', na=False, case=False)]
-    if not achane_before_adp.empty:
-        logging.debug(f"Achane in all_players_df before ADP merge:\n{achane_before_adp[['display_name']]}")
-
-    # Merge ADP data if available
+    # Merge ADP data
     if not adp_df.empty:
-        # Debug: Check Achane in adp_df
-        achane_in_adp_df = adp_df[adp_df['display_name'].str.contains('achane', na=False, case=False)]
-        if not achane_in_adp_df.empty:
-            logging.debug(f"Achane in adp_df:\n{achane_in_adp_df[['display_name', f'ADP_{format}']]}")
-
-        adp_col = f'ADP_{format}'
-        if adp_col in adp_df.columns:
-            all_players_df = all_players_df.merge(adp_df[['display_name', adp_col]], on='display_name', how='left')
-            all_players_df.rename(columns={adp_col: 'ADP'}, inplace=True)
+        adp_column_name = f"ADP_{format.upper()}"
+        if adp_column_name in adp_df.columns:
+            all_players_df = pd.merge(all_players_df, adp_df[['display_name', adp_column_name]], on='display_name', how='left')
+            all_players_df.rename(columns={adp_column_name: 'ADP'}, inplace=True)
         else:
-            logging.warning(f"ADP column for format '{format}' not found.")
-
-    # Debug: Check Achane in all_players_df after ADP merge
-    achane_after_adp = all_players_df[all_players_df['display_name'].str.contains('achane', na=False, case=False)]
-    if not achane_after_adp.empty:
-        logging.debug(f"Achane in all_players_df after ADP merge:\n{achane_after_adp[['display_name', 'ADP']]}")
+            logging.warning(f"ADP column '{adp_column_name}' not found in ADP data. Skipping ADP merge.")
 
     # Sort the final big board by VORP
     all_players_df.sort_values(by='VORP', ascending=False, inplace=True)

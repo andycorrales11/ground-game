@@ -1,72 +1,47 @@
-# ground-game
+# Ground Game - Fantasy Football Draft Helper
 
-## Content:
+Ground Game is a fantasy football draft helper that leverages a Value-Based Drafting (VBD) model to provide data-driven insights during your fantasy draft. The application is currently in the backend development phase, with a command-line interface (CLI) to access the core logic.
 
-### Ingest
+## Backend Functionality
 
-**players.py**: downloads sleeper players
+The backend is built in Python and is responsible for data ingestion, VBD calculations, and draft simulation.
 
-Columns:
+### Data Ingestion
 
-```
-['sleeper_id', 'injury_notes', 'swish_id', 'first_name', 'age', 'injury_body_part',
- 'metadata', 'active', 'last_name', 'injury_start_date', 'stats_id', 'college', 
- 'search_rank', 'number', 'player_id', 'fantasy_data_id', 'birth_city', 'status',
- 'high_school', 'birth_state', 'height', 'search_full_name', 'fantasy_positions', 
- 'team_changed_at', 'competitions', 'rotowire_id', 'full_name', 'weight', 'rotoworld_id',
- 'gsis_id', 'news_updated', 'team', 'depth_chart_position', 'practice_description', 
- 'birth_country', 'search_first_name', 'hashtag', 'practice_participation', 'yahoo_id',
- 'pandascore_id', 'injury_status', 'oddsjam_id', 'opta_id', 'position', 'search_last_name',
- 'sport', 'espn_id', 'birth_date', 'sportradar_id', 'years_exp', 'depth_chart_order', 'team_abbr',
- 'display_name']
+The data ingestion process is handled by a series of scripts that download and process data from various sources:
 
-```
+*   **Sleeper**: Player information and IDs.
+*   **nflverse**: Player stats and roster information.
+*   **FantasyPros**: Average Draft Position (ADP) data.
 
----
+This data is cleaned, merged, and stored in Parquet files for efficient access.
 
-**stats.py**: downloads season stats for players and divides up into QBs, WRs, RBs, and TEs
+### Value-Based Drafting (VBD) Model
 
-Columns:
+The core of the application is the VBD model, which calculates the value of each player relative to a "replacement-level" player at the same position. This provides a much more nuanced view of player value than standard rankings.
 
-```
-player_columns = ['first_name', 'last_name', 'position', 'gsis_id',
-       'display_name', 'current_team_id','jersey_number',
-       'position_group', 'short_name', 'smart_id', 'status',
-       'status_description_abbr', 'status_short_description', 'team_abbr',
-       'uniform_number', 'height', 'weight', 'college_name',
-       'years_of_experience', 'birth_date', 'team_seq', 'suffix']
+*   **VORP (Value Over Replacement Player)**: This is the primary metric used to rank players. It is calculated for each player based on their projected fantasy points and the fantasy points of a replacement-level player at their position.
+*   **VONA (Value Over Next Available)**: This metric helps with draft decisions by calculating the value of drafting a player now versus waiting until your next pick. It does this by simulating the draft until your next turn and showing the value of the player you are considering versus the best player that will be available at your next pick.
 
-qb_columns = ['player_id', 'season', 'season_type', 'completions', 'attempts',
-       'passing_yards', 'passing_tds', 'interceptions', 'sacks', 'sack_yards',
-       'sack_fumbles', 'sack_fumbles_lost', 'passing_air_yards',
-       'passing_yards_after_catch', 'passing_first_downs', 'passing_epa',
-       'passing_2pt_conversions', 'pacr', 'fantasy_points', 'fantasy_points_ppr']
+### Draft Simulation
 
-rb_columns = ['player_id', 'season', 'season_type', 'carries', 'rushing_yards',
-       'rushing_tds', 'rushing_fumbles', 'rushing_fumbles_lost',
-       'rushing_first_downs', 'rushing_epa', 'rushing_2pt_conversions', 
-       'fantasy_points', 'fantasy_points_ppr']
+The application includes a full draft simulation engine that can be accessed via the CLI.
 
-wr_columns = ['player_id', 'season', 'season_type', 'receptions', 
-       'targets' receiving_yards', 'receiving_tds', 'receiving_fumbles',   
-       'receiving_fumbles_lost', 'receiving_air_yards',
-       'receiving_yards_after_catch', 'receiving_first_downs', 'receiving_epa',
-       'receiving_2pt_conversions', 'racr', 'target_share', 'air_yards_share',
-       'wopr_x', 'special_teams_tds', 'fantasy_points', 'fantasy_points_ppr',
-       'games', 'tgt_sh', 'ay_sh', 'yac_sh', 'wopr_y', 'ry_sh', 'rtd_sh',
-       'rfd_sh', 'rtdfd_sh', 'dom', 'w8dom', 'yptmpa', 'ppr_sh']
-```
+*   **Snake and Standard Drafts**: Supports both snake and standard draft formats.
+*   **CPU Logic**: CPU-controlled teams make intelligent picks based on a combination of Best Player Available (BPA), positional need, and positional scarcity.
+*   **Interactive Draft Room**: The CLI provides an interactive draft room where you can see the best available players, filter by position, and make your picks.
 
----
+## How to Run the Application
 
-**adp.py**: Attaches ADP data by format to sleeper players
-
-Columns:
-
-```
-['ADP', 'pos_adp', 'avg_adp', 'ADP_HalfPPR', 'pos_adp_HalfPPR', 'avg_adp_HalfPPR', 'ADP_PPR', 'pos_adp_PPR', 'avg_adp_PPR']
-```
-
-
-### Helpers
-**print_parquet**: testing helper
+1.  **Install Dependencies**:
+    ```bash
+    pip install -r requirements.txt
+    ```
+2.  **Run the Draft**:
+    ```bash
+    python api.py <your_pick_number> --teams <num_teams> --format <PPR|HalfPPR|STD>
+    ```
+    For example, to start a 12-team PPR draft where you have the 3rd pick, you would run:
+    ```bash
+    python api.py 3 --teams 12 --format PPR
+    ```
