@@ -2,6 +2,8 @@ import pandas as pd
 from backend import config
 from backend.services import data_service
 import logging
+from .draft import Draft, Team
+from .simulation_service import simulate_cpu_pick
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
@@ -66,6 +68,54 @@ def calculate_vorp(
     df.loc[df_pos.index, 'VORP'] = df_pos['VORP_pos']
     
     return df
+
+
+def calculate_vona(player_to_eval: pd.Series, draft_sim: Draft, teams_list_sim: list[Team], picks_to_simulate: int, teams: int, current_pick: int, draft_order: str) -> float:
+    """
+    Calculates a more accurate VONA by simulating the draft picks until the user's next turn.
+    """
+    # Get the points and position of the player being evaluated
+    points_col = f"fantasy_points{'' if draft_sim.format == 'STD' else '_' + draft_sim.format.lower()}"
+    player_points = player_to_eval[points_col]
+    player_position = player_to_eval['position']
+
+    # Simulate the picks
+    for i in range(picks_to_simulate):
+        pick_num = current_pick + i + 1
+        current_round = (pick_num - 1) // teams + 1
+
+        if draft_order == 'snake' and current_round % 2 == 0:
+            team_index = teams - ((pick_num - 1) % teams) - 1
+        else:
+            team_index = (pick_num - 1) % teams
+        
+        cpu_team = teams_list_sim[team_index]
+        
+        # Simulate the pick for the CPU team
+        available_for_cpu = draft_sim.get_available_players()
+        if available_for_cpu.empty:
+            break # No more players to draft
+
+        # Ensure VORP is calculated for the simulation frame
+        for position in ['QB', 'RB', 'WR', 'TE']:
+            available_for_cpu = calculate_vorp(available_for_cpu, position, teams=draft_sim.teams, format=draft_sim.format)
+
+        cpu_pick_name = simulate_cpu_pick(available_for_cpu, cpu_team)
+        pos = draft_sim.draft_player(cpu_pick_name)
+        if pos:
+            cpu_team.add_player(cpu_pick_name, pos)
+
+    # After simulation, find the best available player at the same position
+    remaining_players = draft_sim.get_available_players()
+    best_remaining_at_pos = remaining_players[remaining_players['position'] == player_position]
+    
+    if best_remaining_at_pos.empty:
+        # If no players are left at the position, the value is the player's own score
+        return player_points
+    
+    next_best_points = best_remaining_at_pos.sort_values(by=points_col, ascending=False).iloc[0][points_col]
+    
+    return player_points - next_best_points
 
 
 def create_vbd_big_board(season: int = 2024, format: str = config.DEFAULT_DRAFT_FORMAT, teams: int = config.DEFAULT_TEAMS) -> pd.DataFrame:

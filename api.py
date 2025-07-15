@@ -6,8 +6,9 @@ from time import sleep
 import pandas as pd
 from backend.services.draft import Draft, Team
 from backend import config
-from backend.services.vbd_service import create_vbd_big_board, calculate_vorp
-from backend.services.draft_service import get_user_picks, calculate_vona, simulate_cpu_pick
+from backend.services.vbd_service import create_vbd_big_board, calculate_vorp, calculate_vona
+from backend.services.draft_service import get_user_picks
+from backend.services.simulation_service import simulate_cpu_pick
 
 def run_draft_simulation(draft: Draft, teams_list: list[Team], user_pick_number: int, user_picks: list[int], rounds: int, teams: int, non_interactive: bool = False):
     """
