@@ -43,7 +43,7 @@ def main(season: int = 2024) -> None:
         
         logging.info("Importing player data...")
         players_df = nfl.import_players()[player_columns].rename(columns={'gsis_id': 'player_id'})
-        players_df['display_name'] = players_df['display_name'].apply(normalize_name) # Apply normalization here
+        players_df['normalized_name'] = players_df['display_name'].apply(normalize_name) # Apply normalization here
 
         # 2. Define position-specific processing details
         positions_to_process = {
