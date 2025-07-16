@@ -3,13 +3,12 @@
 
 import argparse
 import logging
-from time import sleep
 import pandas as pd
 from backend.services.draft import Draft, Team
 from backend import config
 from backend.services.vbd_service import create_vbd_big_board, calculate_vorp, calculate_vona
 from backend.services.draft_service import get_user_picks
-from backend.services.simulation_service import simulate_cpu_pick
+from backend.services.simulation_service import simulate_cpu_pick, simulate_user_auto_pick
 
 def run_draft_simulation(draft: Draft, teams_list: list[Team], user_pick_number: int, user_picks: list[int], rounds: int, teams: int, non_interactive: bool = False):
     """
@@ -79,7 +78,7 @@ def run_draft_simulation(draft: Draft, teams_list: list[Team], user_pick_number:
                             sim_pos = draft_sim.draft_player(player_row['display_name'])
                             if sim_pos:
                                 sim_user_team.add_player(player_row['display_name'], sim_pos)
-                                vona = calculate_vona(player_row, draft_sim, teams_list_sim, picks_to_simulate, teams, pick_num, draft.order)
+                                vona = calculate_vona(player_row, draft_sim, teams_list_sim, picks_to_simulate, teams, pick_num, draft.order, original_big_board)
                                 vona_values[player_row.name] = vona
                             else:
                                 vona_values[player_row.name] = 0
@@ -96,9 +95,9 @@ def run_draft_simulation(draft: Draft, teams_list: list[Team], user_pick_number:
                     available_players.loc[:, 'VONA'] = 0.0
                 
                 if non_interactive:
-                    print("\nYour pick is up! (Auto-picking best player by VONA)")
-                    # In non-interactive mode, auto-pick the best player based on VONA
-                    best_player_name = available_players.sort_values(by='VONA', ascending=False).iloc[0]['display_name']
+                    print("\nYour pick is up! (Auto-picking using hybrid strategy)")
+                    # In non-interactive mode, auto-pick using the hybrid strategy
+                    best_player_name = simulate_user_auto_pick(available_players, current_team, original_big_board)
                     pos = draft.draft_player(best_player_name)
                     if pos:
                         current_team.add_player(best_player_name, pos)
@@ -113,7 +112,7 @@ def run_draft_simulation(draft: Draft, teams_list: list[Team], user_pick_number:
                 while True:
                     print("\nYour pick is up!")
                     
-                    drafted_info = original_big_board[original_big_board['display_name'].isin(draft.drafted_players)]
+                    drafted_info = original_big_board[original_big_board['normalized_name'].isin(draft.drafted_players)]
                     drafted_counts = drafted_info['position'].value_counts().to_dict()
                     print("Drafted players by position:", drafted_counts)
                     print("Your roster:", {k: v for k, v in current_team.roster.items() if v is not None})
@@ -181,15 +180,13 @@ def run_draft_simulation(draft: Draft, teams_list: list[Team], user_pick_number:
             else:
                 # CPU's pick
                 print(f"CPU (Team {team_index + 1}) is on the clock...")
-                sleep(1)
-                cpu_pick_name = simulate_cpu_pick(available_players, current_team)
+                cpu_pick_name = simulate_cpu_pick(available_players, current_team, original_big_board)
                 pos = draft.draft_player(cpu_pick_name)
                 if pos:
                     current_team.add_player(cpu_pick_name, pos)
                     print(f"CPU (Team {team_index + 1}) drafted: {cpu_pick_name} ({pos})")
                 else:
                     print(f"CPU (Team {team_index + 1}) failed to draft a player.")
-            sleep(1)
     except Exception as e:
         print(f"\n[Error] An unexpected error occurred during the draft simulation: {e}")
         print("The draft will now terminate.")
@@ -199,6 +196,44 @@ def run_draft_simulation(draft: Draft, teams_list: list[Team], user_pick_number:
     print("\nDraft complete!")
     print("Your final roster:")
     print(teams_list[user_pick_number - 1].roster)
+    print("\nOther Rosters:")
+    for i, team in enumerate(teams_list):
+        if i != user_pick_number - 1:
+            print(f"Team {i + 1}: {team.roster}")
+
+    print("\n--- Draft Results ---")
+    points_col = f"fantasy_points_{draft.format.lower()}"
+    
+    results = []
+    for i, team in enumerate(teams_list):
+        roster_names = [player for player in team.roster.values() if player is not None]
+        
+        total_points = 0
+        starters_points = 0
+        
+        if roster_names:
+            team_players_df = original_big_board[original_big_board['display_name'].isin(roster_names)]
+            total_points = team_players_df[points_col].sum()
+            
+            # Calculate starters points
+            starter_names = [player for slot, player in team.roster.items() if player is not None and not slot.startswith('BN')]
+            if starter_names:
+                starter_players_df = original_big_board[original_big_board['display_name'].isin(starter_names)]
+                starters_points = starter_players_df[points_col].sum()
+
+        is_user = "(You)" if (i + 1) == user_pick_number else ""
+        results.append({
+            'Team': f"Team {i + 1} {is_user}",
+            'Starters Points': starters_points,
+            'Total Roster Points': total_points
+        })
+
+    results_df = pd.DataFrame(results)
+    results_df.sort_values(by='Starters Points', ascending=False, inplace=True)
+    results_df.reset_index(drop=True, inplace=True)
+    
+    print("\nProjected Points Summary:")
+    print(results_df)
 
 
 def main():

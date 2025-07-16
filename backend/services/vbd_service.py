@@ -71,7 +71,7 @@ def calculate_vorp(
     return df
 
 
-def calculate_vona(player_to_eval: pd.Series, draft_sim: Draft, teams_list_sim: list[Team], picks_to_simulate: int, teams: int, current_pick: int, draft_order: str) -> float:
+def calculate_vona(player_to_eval: pd.Series, draft_sim: Draft, teams_list_sim: list[Team], picks_to_simulate: int, teams: int, current_pick: int, draft_order: str, full_player_df: pd.DataFrame) -> float:
     """
     Calculates a more accurate VONA by simulating the draft picks until the user's next turn.
     If the calculated VONA is NaN or negative, it returns 0.
@@ -101,7 +101,7 @@ def calculate_vona(player_to_eval: pd.Series, draft_sim: Draft, teams_list_sim: 
         for position in ['QB', 'RB', 'WR', 'TE']:
             available_for_cpu = calculate_vorp(available_for_cpu, position, teams=draft_sim.teams, format=draft_sim.format)
 
-        cpu_pick_name = simulate_cpu_pick(available_for_cpu, cpu_team)
+        cpu_pick_name = simulate_cpu_pick(available_for_cpu, cpu_team, full_player_df)
         pos = draft_sim.draft_player(cpu_pick_name)
         if pos:
             cpu_team.add_player(cpu_pick_name, pos)

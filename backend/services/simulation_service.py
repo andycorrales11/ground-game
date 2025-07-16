@@ -1,4 +1,3 @@
-
 import pandas as pd
 import numpy as np
 from .draft import Team
@@ -37,32 +36,36 @@ def calculate_draft_score(players: pd.DataFrame) -> pd.DataFrame:
         
     return players
 
-def simulate_cpu_pick(available_players: pd.DataFrame, team: Team) -> str:
+def simulate_cpu_pick(available_players: pd.DataFrame, team: Team, full_player_df: pd.DataFrame) -> str:
     """
     Simulates a CPU pick using a balanced approach of Best Player Available (BPA),
     positional need, and positional scarcity.
     """
     # 1. Calculate draft_score for all available players to establish a BPA baseline.
-    available_players = calculate_draft_score(available_players)
+    players = calculate_draft_score(available_players)
 
-    # 2. Identify team needs and positional scarcity.
-    needs = team.get_positional_needs()
-    scarcity = calculate_positional_scarcity(available_players)
+    # 2. Apply penalties and bonuses
+    # QB Penalty: If team has 2 QBs, heavily penalize drafting another
+    if team.count_players_at_position('QB', full_player_df) >= 2:
+        players.loc[players['position'] == 'QB', 'draft_score'] *= 5.0 # Heavy penalty
 
-    # 3. Apply bonuses to the draft_score to "nudge" the decision.
-    if needs:
-        needed_player_indices = available_players[available_players['position'].isin(needs)].index
-        available_players.loc[needed_player_indices, 'draft_score'] *= 0.85
+    # Starter Bonus: Prioritize filling starting spots
+    starting_needs = team.get_starting_positional_needs()
+    if starting_needs:
+        needed_indices = players[players['position'].isin(starting_needs)].index
+        players.loc[needed_indices, 'draft_score'] *= 0.70 # Significant bonus
 
+    # Scarcity Bonus
+    scarcity = calculate_positional_scarcity(players)
     if scarcity:
         scarcest_position = max(scarcity, key=scarcity.get)
-        top_player_at_scarcest = available_players[available_players['position'] == scarcest_position].sort_values(by='VORP', ascending=False).head(1)
+        top_player_at_scarcest = players[players['position'] == scarcest_position].sort_values(by='VORP', ascending=False).head(1)
         if not top_player_at_scarcest.empty:
             player_index = top_player_at_scarcest.index[0]
-            available_players.loc[player_index, 'draft_score'] -= 10
+            players.loc[player_index, 'draft_score'] -= 10
 
-    # 4. Make the pick based on the adjusted score.
-    top_10 = available_players.sort_values(by='draft_score', ascending=True).head(10)
+    # 3. Make the pick based on the adjusted score.
+    top_10 = players.sort_values(by='draft_score', ascending=True).head(10)
     
     if top_10.empty:
         return "No players available"
@@ -80,3 +83,46 @@ def simulate_cpu_pick(available_players: pd.DataFrame, team: Team) -> str:
             probabilities = [1 / len(choices)] * len(choices)
 
     return np.random.choice(choices, p=probabilities)
+
+def simulate_user_auto_pick(available_players: pd.DataFrame, team: Team, full_player_df: pd.DataFrame) -> str:
+    """
+    Simulates a user's auto-pick using a VONA-enhanced hybrid score.
+    """
+    if available_players.empty:
+        return "No players available"
+
+    # 1. Create ranks for VONA, VORP, and ADP
+    players = available_players.copy()
+    players['vona_rank'] = players['VONA'].rank(ascending=False, na_option='bottom')
+    players['vorp_rank'] = players['VORP'].rank(ascending=False, na_option='bottom')
+    players['adp_rank'] = players['ADP'].fillna(999).rank(ascending=True, na_option='bottom')
+
+    # 2. Calculate the hybrid auto_pick_score
+    players['auto_pick_score'] = (0.5 * players['vona_rank']) + \
+                                 (0.2 * players['vorp_rank']) + \
+                                 (0.3 * players['adp_rank'])
+
+    # 3. Apply penalties and bonuses
+    # QB Penalty
+    if team.count_players_at_position('QB', full_player_df) >= 2:
+        players.loc[players['position'] == 'QB', 'auto_pick_score'] *= 5.0
+
+    # Starter Bonus
+    starting_needs = team.get_starting_positional_needs()
+    if starting_needs:
+        needed_indices = players[players['position'].isin(starting_needs)].index
+        players.loc[needed_indices, 'auto_pick_score'] *= 0.75
+
+    # Scarcity Bonus
+    scarcity = calculate_positional_scarcity(players)
+    if scarcity:
+        scarcest_position = max(scarcity, key=scarcity.get)
+        top_player_at_scarcest = players[players['position'] == scarcest_position].sort_values(by='VORP', ascending=False).head(1)
+        if not top_player_at_scarcest.empty:
+            player_index = top_player_at_scarcest.index[0]
+            players.loc[player_index, 'auto_pick_score'] -= 5
+
+    # 4. Make the pick based on the best (lowest) auto_pick_score
+    best_pick = players.sort_values(by='auto_pick_score', ascending=True).iloc[0]
+    
+    return best_pick['display_name']

@@ -79,14 +79,54 @@ class Team:
 
     def get_positional_needs(self) -> List[str]:
         """
-        Identifies unfilled positions on the roster.
+        Identifies all unfilled positions on the roster, including bench.
         """
         needs = []
-        for pos in ['QB', 'RB', 'WR', 'TE', 'FLEX']:
-            # Check if all slots for this position are filled
+        # Use a set to avoid duplicate position checks
+        positions_to_check = set(cfg.rstrip('0123456789') for cfg in self.roster.keys())
+        
+        for pos in positions_to_check:
+            if pos == 'BN': continue # Skip bench
+            
             slots_for_pos = [s for s in self.roster.keys() if s.startswith(pos)]
             filled_slots = [s for s in slots_for_pos if self.roster[s] is not None]
             
             if len(filled_slots) < len(slots_for_pos):
                 needs.append(pos)
         return needs
+
+    def get_starting_positional_needs(self) -> List[str]:
+        """
+        Identifies unfilled positions in the starting lineup only.
+        """
+        needs = []
+        # Exclude bench slots from consideration
+        starting_slots = [slot for slot in self.roster.keys() if not slot.startswith('BN')]
+        positions_to_check = set(cfg.rstrip('0123456789') for cfg in starting_slots)
+
+        for pos in positions_to_check:
+            slots_for_pos = [s for s in starting_slots if s.startswith(pos)]
+            filled_slots = [s for s in slots_for_pos if self.roster[s] is not None]
+            
+            if len(filled_slots) < len(slots_for_pos):
+                needs.append(pos)
+        return needs
+
+    def count_players_at_position(self, pos: str, player_df: pd.DataFrame) -> int:
+        """
+        Counts the number of players of a specific position on the team.
+        """
+        count = 0
+        # Get the display names of players on the roster
+        rostered_players = [name for name in self.roster.values() if name is not None]
+        if not rostered_players:
+            return 0
+        
+        # Filter the main player DataFrame to get the positions of rostered players
+        roster_details = player_df[player_df['display_name'].isin(rostered_players)]
+        
+        # Count how many have the specified position
+        if not roster_details.empty:
+            count = roster_details[roster_details['position'] == pos].shape[0]
+            
+        return count
