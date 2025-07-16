@@ -134,7 +134,7 @@ def run_draft(
             if picks_to_simulate > 0:
                 print(f"Simulating {picks_to_simulate} picks until your next turn...")
                 vona_values = {}
-                for index, player_row in available_players.head(30).iterrows():
+                for index, player_row in available_players.sort_values(by='ADP').head(30).iterrows():
                     # Create a deep copy of the draft state for a clean simulation
                     draft_sim = Draft(draft.players.copy(), draft.format, draft.teams, draft.rounds, draft.roster, draft.order)
                     draft_sim.drafted_players = draft.drafted_players.copy()
@@ -149,7 +149,7 @@ def run_draft(
                 print(f"Auto-drafting: {player_name}")
             else:
                 # Interactive sub-loop
-                sort_col, position_filter = 'VONA', 'ALL'
+                sort_col, position_filter = 'ADP', 'ALL'
                 while True:
                     if position_filter in ['K', 'DEF']: sort_col = 'ADP'
                     print(f"\n--- Your Pick! (Filter: {position_filter}, Sorted by: {sort_col}) ---")
