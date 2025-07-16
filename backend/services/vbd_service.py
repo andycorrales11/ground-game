@@ -128,45 +128,57 @@ def calculate_vona(player_to_eval: pd.Series, draft_sim: Draft, teams_list_sim: 
 def create_vbd_big_board(season: int = 2024, format: str = config.DEFAULT_DRAFT_FORMAT, teams: int = config.DEFAULT_TEAMS) -> pd.DataFrame:
     """
     Creates a VORP-based "big board" for all positions, incorporating ADP data.
-
-    Returns:
-        A DataFrame of all players, sorted by VORP.
+    Kickers and Defenses will be included but will have a VORP of 0.
     """
-    all_players_df = pd.DataFrame()
+    # 1. Load ADP data as the base DataFrame to include all players (including K, DEF)
+    base_df = data_service.load_adp_data()
+    if base_df is None or base_df.empty:
+        logging.error("Could not load ADP data, cannot create big board.")
+        return pd.DataFrame()
 
-    # Load ADP data
-    adp_df = data_service.load_adp_data()
-    if adp_df is None:
-        adp_df = pd.DataFrame()  # Ensure adp_df is a DataFrame
-    elif 'normalized_name' not in adp_df.columns and 'display_name' in adp_df.columns:
-        adp_df['normalized_name'] = adp_df['display_name'].apply(utils.normalize_name)
+    # Ensure base columns exist
+    if 'normalized_name' not in base_df.columns and 'display_name' in base_df.columns:
+        base_df['normalized_name'] = base_df['display_name'].apply(utils.normalize_name)
+    
+    # Rename the format-specific ADP column to a generic 'ADP' for easier use
+    adp_column_name = f"ADP_{format}"
+    if adp_column_name in base_df.columns:
+        base_df.rename(columns={adp_column_name: 'ADP'}, inplace=True)
+    else:
+        logging.warning(f"ADP column '{adp_column_name}' not found. ADP values will be missing.")
+        base_df['ADP'] = None
 
+    # 2. Create a DataFrame for skill positions with fantasy points
+    skill_players_df = pd.DataFrame()
     for position in ['QB', 'RB', 'WR', 'TE']:
         pos_df = data_service.load_athletic_projections(position, format)
         if pos_df is not None:
-            # Rename columns to match expected format
             pos_df.rename(columns={'Player': 'display_name', 'FPS': f'fantasy_points_{format.lower()}'}, inplace=True)
-            pos_df['position'] = position  # Add position column
+            pos_df['position'] = position
             pos_df['normalized_name'] = pos_df['display_name'].apply(utils.normalize_name)
-            
-            # Calculate VORP
-            pos_vorp_df = calculate_vorp(pos_df, position, teams, format)
-            
-            all_players_df = pd.concat([all_players_df, pos_vorp_df], ignore_index=True)
+            skill_players_df = pd.concat([skill_players_df, pos_df], ignore_index=True)
         else:
             logging.warning(f"Athletic projections file not found for {position}. Skipping.")
-            continue
 
-    # Merge ADP data
-    if not adp_df.empty:
-        adp_column_name = f"ADP_{format}"
-        if adp_column_name in adp_df.columns:
-            all_players_df = pd.merge(all_players_df, adp_df[['normalized_name', adp_column_name]], on='normalized_name', how='left')
-            all_players_df.rename(columns={adp_column_name: 'ADP'}, inplace=True)
+    # 3. Merge the fantasy points into the base DataFrame
+    if not skill_players_df.empty:
+        # Select only the key columns to merge from skill_players_df
+        points_col = f'fantasy_points_{format.lower()}'
+        merge_cols = ['normalized_name', points_col]
+        if points_col in skill_players_df.columns:
+            base_df = pd.merge(base_df, skill_players_df[merge_cols], on='normalized_name', how='left')
         else:
-            logging.warning(f"ADP column '{adp_column_name}' not found in ADP data. Skipping ADP merge.")
+            base_df[points_col] = 0.0
+    else:
+        base_df[f'fantasy_points_{format.lower()}'] = 0.0
+
+    # 4. Calculate VORP for all positions (will handle K/DEF gracefully)
+    all_positions = base_df['position'].unique()
+    final_df = base_df.copy()
+    for position in all_positions:
+        final_df = calculate_vorp(final_df, position, teams, format)
 
     # Sort the final big board by VORP
-    all_players_df.sort_values(by='VORP', ascending=False, inplace=True)
+    final_df.sort_values(by='VORP', ascending=False, inplace=True)
     
-    return all_players_df
+    return final_df
