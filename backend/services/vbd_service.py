@@ -80,7 +80,6 @@ def calculate_vona(player_to_eval: pd.Series, draft_sim: Draft, teams_list_sim: 
     points_col = f"fantasy_points_{draft_sim.format.lower()}"
     player_points = player_to_eval[points_col]
     player_position = player_to_eval['position']
-
     # Simulate the picks
     for i in range(picks_to_simulate):
         pick_num = current_pick + i + 1
@@ -119,17 +118,10 @@ def calculate_vona(player_to_eval: pd.Series, draft_sim: Draft, teams_list_sim: 
 
     vona_value = player_points - next_best_points
 
-    print(f"--- VONA Debugging for {player_to_eval['display_name']} ({player_position}) ---")
-    print(f"Player points: {player_points}")
-    print(f"Next best points: {next_best_points}")
-    print(f"Calculated VONA: {vona_value}")
-
     # If VONA is NaN or negative, set to 0
     if pd.isna(vona_value) or vona_value < 0:
-        print(f"VONA is NaN or negative ({vona_value}), returning 0.0")
         return 0.0
     else:
-        print(f"VONA is {vona_value}, returning {vona_value}")
         return vona_value
 
 
@@ -145,17 +137,17 @@ def create_vbd_big_board(season: int = 2024, format: str = config.DEFAULT_DRAFT_
     # Load ADP data
     adp_df = data_service.load_adp_data()
     if adp_df is None:
-        adp_df = pd.DataFrame() # Ensure adp_df is a DataFrame
-    else:
-        adp_df['display_name'] = adp_df['display_name'].apply(utils.normalize_name)
+        adp_df = pd.DataFrame()  # Ensure adp_df is a DataFrame
+    elif 'normalized_name' not in adp_df.columns and 'display_name' in adp_df.columns:
+        adp_df['normalized_name'] = adp_df['display_name'].apply(utils.normalize_name)
 
     for position in ['QB', 'RB', 'WR', 'TE']:
         pos_df = data_service.load_athletic_projections(position, format)
         if pos_df is not None:
             # Rename columns to match expected format
             pos_df.rename(columns={'Player': 'display_name', 'FPS': f'fantasy_points_{format.lower()}'}, inplace=True)
-            pos_df['position'] = position # Add position column
-            pos_df['display_name'] = pos_df['display_name'].apply(utils.normalize_name)
+            pos_df['position'] = position  # Add position column
+            pos_df['normalized_name'] = pos_df['display_name'].apply(utils.normalize_name)
             
             # Calculate VORP
             pos_vorp_df = calculate_vorp(pos_df, position, teams, format)
@@ -169,7 +161,7 @@ def create_vbd_big_board(season: int = 2024, format: str = config.DEFAULT_DRAFT_
     if not adp_df.empty:
         adp_column_name = f"ADP_{format}"
         if adp_column_name in adp_df.columns:
-            all_players_df = pd.merge(all_players_df, adp_df[['display_name', adp_column_name]], on='display_name', how='left')
+            all_players_df = pd.merge(all_players_df, adp_df[['normalized_name', adp_column_name]], on='normalized_name', how='left')
             all_players_df.rename(columns={adp_column_name: 'ADP'}, inplace=True)
         else:
             logging.warning(f"ADP column '{adp_column_name}' not found in ADP data. Skipping ADP merge.")

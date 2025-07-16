@@ -28,9 +28,7 @@ def load_athletic_projections(position: str, format: str) -> pd.DataFrame | None
     """Loads The Athletic's projections for a given position and format."""
     file_path = config.DATA_DIR / "projections" / f"athletic_{position.lower()}_projections_{format.lower()}.csv"
     if file_path.exists():
-        logging.info(f"Loading Athletic projections from: {file_path}")
         return pd.read_csv(file_path, sep='\t')
-    logging.warning(f"Athletic projections file not found: {file_path}")
     return None
 
 

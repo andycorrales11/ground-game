@@ -20,7 +20,7 @@ class Draft:
         """
         Returns a DataFrame of players who have not yet been drafted.
         """
-        return self.players[~self.players['display_name'].isin(self.drafted_players)]
+        return self.players[~self.players['normalized_name'].isin(self.drafted_players)]
 
     def draft_player(self, player_name: str) -> str | None:
         """
@@ -32,17 +32,20 @@ class Draft:
         Returns:
             The position of the drafted player if successful, otherwise None.
         """
-        if player_name in self.drafted_players:
-            return None  # Player already drafted
-
-        player_row = self.players[self.players['display_name'] == player_name]
+        # player_name is display_name. Find the corresponding row.
+        player_rows = self.players[self.players['display_name'] == player_name]
         
-        if not player_row.empty:
-            position = player_row.iloc[0]['position']
-            self.drafted_players.add(player_name)
-            return position
-            
-        return None # Player not found
+        if player_rows.empty:
+            return None # Player not found
+
+        # Find the first non-drafted player with this name
+        for index, row in player_rows.iterrows():
+            normalized_name = row['normalized_name']
+            if normalized_name not in self.drafted_players:
+                self.drafted_players.add(normalized_name)
+                return row['position']
+
+        return None # Player already drafted
 
 class Team:
     """

@@ -2,6 +2,7 @@
 # This file will contain the interactive CLI for the draft simulation.
 
 import argparse
+import logging
 from time import sleep
 import pandas as pd
 from backend.services.draft import Draft, Team
@@ -40,7 +41,7 @@ def run_draft_simulation(draft: Draft, teams_list: list[Team], user_pick_number:
                 for position in ['QB', 'RB', 'WR', 'TE']:
                     available_players = calculate_vorp(available_players, position, teams=draft.teams, format=draft.format)
                 
-                available_players.sort_values(by='VORP', ascending=False, inplace=True)
+                available_players.sort_values(by='ADP', ascending=True, inplace=True)
                 draft.players = available_players
 
             if pick_num in user_picks:

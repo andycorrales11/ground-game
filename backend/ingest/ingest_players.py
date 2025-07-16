@@ -37,7 +37,8 @@ def _persist(df: pd.DataFrame) -> Path:
 def _format_parquet(df: pd.DataFrame) -> pd.DataFrame:
     df = df.dropna(subset=['team'])
     df.loc[:, 'display_name'] = df['first_name'] + ' ' + df['last_name']
-    df = df[['sleeper_id', 'gsis_id', 'active', 'college', 'number', 'position', 'age', 'team', 'display_name', 'first_name', 'last_name']]
+    df['normalized_name'] = df['display_name'].apply(normalize_name)
+    df = df[['sleeper_id', 'gsis_id', 'active', 'college', 'number', 'position', 'age', 'team', 'display_name', 'normalized_name', 'first_name', 'last_name']]
     return df
 
 # Main function to fetch, format, and persist the player data.
