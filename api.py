@@ -1,5 +1,3 @@
-# This file will contain the interactive CLI for the draft simulation.
-
 import argparse
 import logging
 import pandas as pd
