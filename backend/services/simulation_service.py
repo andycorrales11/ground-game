@@ -8,7 +8,7 @@ def calculate_positional_scarcity(players: pd.DataFrame) -> dict:
     """
     scarcity = {}
     for pos in ['QB', 'RB', 'WR', 'TE']:
-        pos_players = players[players['position'] == pos].sort_values(by='VORP', ascending=False)
+        pos_players = players[players['pos'] == pos].sort_values(by='VORP', ascending=False)
         if len(pos_players) > 1:
             # Scarcity is the VORP difference between the best and second-best player
             scarcity[pos] = pos_players.iloc[0]['VORP'] - pos_players.iloc[1]['VORP']
@@ -47,19 +47,19 @@ def simulate_cpu_pick(available_players: pd.DataFrame, team: Team, full_player_d
     # 2. Apply penalties and bonuses
     # QB Penalty: If team has 2 QBs, heavily penalize drafting another
     if team.count_players_at_position('QB', full_player_df) >= 2:
-        players.loc[players['position'] == 'QB', 'draft_score'] *= 5.0 # Heavy penalty
+        players.loc[players['pos'] == 'QB', 'draft_score'] *= 5.0 # Heavy penalty
 
     # Starter Bonus: Prioritize filling starting spots
     starting_needs = team.get_starting_positional_needs()
     if starting_needs:
-        needed_indices = players[players['position'].isin(starting_needs)].index
+        needed_indices = players[players['pos'].isin(starting_needs)].index
         players.loc[needed_indices, 'draft_score'] *= 0.70 # Significant bonus
 
     # Scarcity Bonus
     scarcity = calculate_positional_scarcity(players)
     if scarcity:
         scarcest_position = max(scarcity, key=scarcity.get)
-        top_player_at_scarcest = players[players['position'] == scarcest_position].sort_values(by='VORP', ascending=False).head(1)
+        top_player_at_scarcest = players[players['pos'] == scarcest_position].sort_values(by='VORP', ascending=False).head(1)
         if not top_player_at_scarcest.empty:
             player_index = top_player_at_scarcest.index[0]
             players.loc[player_index, 'draft_score'] -= 10
@@ -105,19 +105,19 @@ def simulate_user_auto_pick(available_players: pd.DataFrame, team: Team, full_pl
     # 3. Apply penalties and bonuses
     # QB Penalty
     if team.count_players_at_position('QB', full_player_df) >= 2:
-        players.loc[players['position'] == 'QB', 'auto_pick_score'] *= 5.0
+        players.loc[players['pos'] == 'QB', 'auto_pick_score'] *= 5.0
 
     # Starter Bonus
     starting_needs = team.get_starting_positional_needs()
     if starting_needs:
-        needed_indices = players[players['position'].isin(starting_needs)].index
+        needed_indices = players[players['pos'].isin(starting_needs)].index
         players.loc[needed_indices, 'auto_pick_score'] *= 0.75
 
     # Scarcity Bonus
     scarcity = calculate_positional_scarcity(players)
     if scarcity:
         scarcest_position = max(scarcity, key=scarcity.get)
-        top_player_at_scarcest = players[players['position'] == scarcest_position].sort_values(by='VORP', ascending=False).head(1)
+        top_player_at_scarcest = players[players['pos'] == scarcest_position].sort_values(by='VORP', ascending=False).head(1)
         if not top_player_at_scarcest.empty:
             player_index = top_player_at_scarcest.index[0]
             players.loc[player_index, 'auto_pick_score'] -= 5
