@@ -10,7 +10,7 @@ from backend.services.vbd_service import create_vbd_big_board, calculate_vorp, c
 from backend.services.draft_service import get_user_picks
 from backend.services.simulation_service import simulate_cpu_pick, simulate_user_auto_pick
 from backend.services import sleeper_service, data_service
-from backend import utils
+from backend.utils import normalize_name
 
 def run_draft(
     draft: Draft,
@@ -25,7 +25,7 @@ def run_draft(
     This function is the single source of truth for draft logic.
     """
     original_big_board = draft.players.copy()
-    
+    print(original_big_board.head())
     # --- Pre-calculate draft order for live mode ---
     picks_order = []
     slot_to_roster_id = {}
@@ -64,13 +64,13 @@ def run_draft(
                         pick = all_picks[i]
                         player_id = pick.get('player_id')
                         roster_id = pick.get('roster_id') or slot_to_roster_id.get(str(pick.get('draft_slot')))
-                        
                         if not player_id or not roster_id: continue
-
-                        player_info = original_big_board[original_big_board['sleeper_id'] == player_id].iloc[0]
-                        draft.draft_player(player_info['display_name'])
+                        player_info = original_big_board.loc[original_big_board['sleeper_id'] == str(float(player_id))]
+                        if player_info.empty:
+                            continue
+                        draft.draft_player(player_info['normalized_name'].iloc[0])
                         
-                        print(f"Pick {i + 1}: Team {roster_id} drafted {player_info['display_name']} ({player_info['position']})")
+                        print(f"Pick {i + 1}: Team {roster_id} drafted {player_info['display_name']} ({player_info['pos']})")
                     current_pick_num = picks_made
 
                 # Now, determine who is on the clock for the *next* pick
@@ -156,17 +156,18 @@ def run_draft(
                     
                     filtered_board = available_players.copy()
                     if position_filter != 'ALL':
-                        if position_filter == 'FLEX': filtered_board = filtered_board[filtered_board['position'].isin(['RB', 'WR', 'TE'])]
-                        else: filtered_board = filtered_board[filtered_board['position'] == position_filter]
+                        if position_filter == 'FLEX': filtered_board = filtered_board[filtered_board['pos'].isin(['RB', 'WR', 'TE'])]
+                        else: filtered_board = filtered_board[filtered_board['pos'] == position_filter]
 
-                    display_cols = ['display_name', 'position', 'VORP', 'VONA', 'ADP']
+                    display_cols = ['display_name', 'pos', 'VORP', 'VONA', 'ADP']
                     existing_cols = [c for c in display_cols if c in filtered_board.columns]
                     ascending = sort_col == 'ADP'
                     print(filtered_board.sort_values(by=sort_col, ascending=ascending).head(20)[existing_cols])
                     
                     cmd = input("\nEnter 'draft <name>', 'sort <col>', 'filter <pos>', 'help': ").lower()
                     if cmd.startswith('draft '):
-                        player_name = cmd[6:]
+                        input_name = cmd[6:]
+                        player_name = normalize_name(input_name)
                         break
                     elif cmd.startswith('sort '): sort_col = cmd[5:].upper()
                     elif cmd.startswith('filter '): position_filter = cmd[7:].upper()
@@ -178,9 +179,12 @@ def run_draft(
             pos = draft.draft_player(player_name)
             if pos:
                 current_team.add_player(player_name, pos)
-                print(f"You drafted: {player_name} ({pos})")
+                print(f"You drafted: {input_name} ({pos})")
                 if draft_id:
                     print("Waiting for pick to appear on Sleeper board...")
+                while(True):
+                    input("Press Enter to continue...")
+                    break # In live mode, we wait for the user to confirm the pick
             else:
                 print(f"[Error] Could not draft '{player_name}'. Please try again.")
                 if not draft_id: current_pick_num -=1 # Decrement to retry the pick in sim mode
@@ -191,7 +195,7 @@ def run_draft(
             available_players = draft.get_available_players()
             print(f"CPU (Team {team_index + 1}) is on the clock...")
             cpu_pick_name = simulate_cpu_pick(available_players, current_team, original_big_board)
-            pos = draft.draft_player(cpu_pick_name)
+            pos = draft(normalize_name(cpu_pick_name))
             if pos:
                 current_team.add_player(cpu_pick_name, pos)
                 print(f"CPU (Team {team_index + 1}) drafted: {cpu_pick_name} ({pos})")

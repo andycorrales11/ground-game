@@ -51,7 +51,7 @@ def calculate_vorp(
         replacement_level = num_starters * teams
 
     # Sort players by fantasy points for the specified position
-    df_pos = df[df['position'] == position].copy()
+    df_pos = df[df['pos'] == position].copy()
     df_pos.sort_values(by=points_column, ascending=False, inplace=True)
 
     # Find the replacement player
@@ -77,9 +77,9 @@ def calculate_vona(player_to_eval: pd.Series, draft_sim: Draft, teams_list_sim: 
     If the calculated VONA is NaN or negative, it returns 0.
     """
     # Get the points and position of the player being evaluated
-    points_col = f"fantasy_points_{draft_sim.format.lower()}"
+    points_col = f"fantasy_points_{draft_sim.format.lower().replace('halfppr', 'half_ppr')}"
     player_points = player_to_eval[points_col]
-    player_position = player_to_eval['position']
+    player_position = player_to_eval['pos']
     # Simulate the picks
     for i in range(picks_to_simulate):
         pick_num = current_pick + i + 1
@@ -102,13 +102,13 @@ def calculate_vona(player_to_eval: pd.Series, draft_sim: Draft, teams_list_sim: 
             available_for_cpu = calculate_vorp(available_for_cpu, position, teams=draft_sim.teams, format=draft_sim.format)
 
         cpu_pick_name = simulate_cpu_pick(available_for_cpu, cpu_team, full_player_df)
-        pos = draft_sim.draft_player(cpu_pick_name)
+        pos = draft_sim.draft_player(utils.normalize_name(cpu_pick_name))
         if pos:
             cpu_team.add_player(cpu_pick_name, pos)
 
     # After simulation, find the best available player at the same position
     remaining_players = draft_sim.get_available_players()
-    best_remaining_at_pos = remaining_players[remaining_players['position'] == player_position]
+    best_remaining_at_pos = remaining_players[remaining_players['pos'] == player_position]
 
     if best_remaining_at_pos.empty:
         # If no players are left at the position, the value is 0 per new requirement
@@ -130,53 +130,44 @@ def create_vbd_big_board(season: int = 2024, format: str = config.DEFAULT_DRAFT_
     Creates a VORP-based "big board" for all positions, incorporating ADP data.
     Kickers and Defenses will be included but will have a VORP of 0.
     """
-    # 1. Load ADP data as the base DataFrame to include all players (including K, DEF)
-    base_df = data_service.load_adp_data()
+    # 1. Load player data from the database
+    base_df = data_service.load_player_data()
     if base_df is None or base_df.empty:
-        logging.error("Could not load ADP data, cannot create big board.")
+        logging.error("Could not load player data, cannot create big board.")
         return pd.DataFrame()
 
     # Ensure base columns exist
     if 'normalized_name' not in base_df.columns and 'display_name' in base_df.columns:
         base_df['normalized_name'] = base_df['display_name'].apply(utils.normalize_name)
-    
-    # Rename the format-specific ADP column to a generic 'ADP' for easier use
-    adp_column_name = f"ADP_{format}"
-    if adp_column_name in base_df.columns:
-        base_df.rename(columns={adp_column_name: 'ADP'}, inplace=True)
+
+    # Map format to database column names
+    adp_col_map = {'STD': 'std_adp', 'PPR': 'ppr_adp', 'HalfPPR': 'half_ppr_adp'}
+    proj_col_map = {'STD': 'std_proj_pts', 'PPR': 'ppr_proj_pts', 'HalfPPR': 'half_ppr_proj_pts'}
+
+    adp_column = adp_col_map.get(format)
+    proj_column = proj_col_map.get(format)
+
+    # Rename the format-specific ADP column to a generic 'ADP'
+    if adp_column and adp_column in base_df.columns:
+        base_df.rename(columns={adp_column: 'ADP'}, inplace=True)
     else:
-        logging.warning(f"ADP column '{adp_column_name}' not found. ADP values will be missing.")
+        logging.warning(f"ADP column for format '{format}' not found. ADP values will be missing.")
         base_df['ADP'] = None
 
-    # 2. Create a DataFrame for skill positions with fantasy points
-    skill_players_df = pd.DataFrame()
-    for position in ['QB', 'RB', 'WR', 'TE']:
-        pos_df = data_service.load_athletic_projections(position, format)
-        if pos_df is not None:
-            pos_df.rename(columns={'Player': 'display_name', 'FPS': f'fantasy_points_{format.lower()}'}, inplace=True)
-            pos_df['position'] = position
-            pos_df['normalized_name'] = pos_df['display_name'].apply(utils.normalize_name)
-            skill_players_df = pd.concat([skill_players_df, pos_df], ignore_index=True)
-        else:
-            logging.warning(f"Athletic projections file not found for {position}. Skipping.")
-
-    # 3. Merge the fantasy points into the base DataFrame
-    if not skill_players_df.empty:
-        # Select only the key columns to merge from skill_players_df
-        points_col = f'fantasy_points_{format.lower()}'
-        merge_cols = ['normalized_name', points_col]
-        if points_col in skill_players_df.columns:
-            base_df = pd.merge(base_df, skill_players_df[merge_cols], on='normalized_name', how='left')
-        else:
-            base_df[points_col] = 0.0
+    # Rename the format-specific projection column to the generic 'fantasy_points' name expected by VORP calculation
+    fantasy_points_col = f"fantasy_points_{format.lower().replace('halfppr', 'half_ppr')}"
+    if proj_column and proj_column in base_df.columns:
+        base_df.rename(columns={proj_column: fantasy_points_col}, inplace=True)
     else:
-        base_df[f'fantasy_points_{format.lower()}'] = 0.0
+        logging.warning(f"Projection column for format '{format}' not found. Fantasy points will be missing.")
+        base_df[fantasy_points_col] = 0.0
 
-    # 4. Calculate VORP for all positions (will handle K/DEF gracefully)
-    all_positions = base_df['position'].unique()
+    # 4. Calculate VORP for all positions
+    all_positions = base_df['pos'].unique()
     final_df = base_df.copy()
     for position in all_positions:
-        final_df = calculate_vorp(final_df, position, teams, format)
+        if position in ['QB', 'RB', 'WR', 'TE']: # Only calculate VORP for skill positions
+            final_df = calculate_vorp(final_df, position, teams, format)
 
     # Sort the final big board by VORP
     final_df.sort_values(by='VORP', ascending=False, inplace=True)

@@ -1,35 +1,54 @@
 """
-Service for loading data from the file system.
+Service for loading data from the database.
 """
-import glob
 import logging
 import os
 import pandas as pd
-from backend import config
+import psycopg
+from dotenv import load_dotenv
 
-def _get_latest_file(path_pattern: str) -> str | None:
-    """Gets the most recent file matching a glob pattern."""
-    files = glob.glob(path_pattern)
-    if not files:
-        logging.warning(f"No files found matching pattern: {path_pattern}")
+# Load environment variables from .env file
+load_dotenv()
+
+# --- DATABASE CONNECTION ---
+DB_HOST = os.getenv("DB_HOST")
+DB_NAME = os.getenv("DB_NAME")
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+
+def get_db_connection():
+    """Establishes a connection to the PostgreSQL database."""
+    try:
+        conn = psycopg.connect(
+            host=DB_HOST,
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD
+        )
+        return conn
+    except psycopg.OperationalError as e:
+        logging.error(f"Error connecting to the database: {e}")
         return None
-    return max(files, key=os.path.getctime)
 
-def load_adp_data() -> pd.DataFrame | None:
-    """Loads the latest player ADP data."""
-    path_pattern = str(config.PLAYER_ADP_DIR / "*_adp.parquet")
-    latest_file = _get_latest_file(path_pattern)
-    if latest_file:
-        logging.info(f"Loading ADP data from: {latest_file}")
-        return pd.read_parquet(latest_file)
-    return None
+def load_player_data() -> pd.DataFrame | None:
+    """Loads all player data from the database."""
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            logging.error("Failed to get database connection.")
+            return None
+        
+        query = "SELECT * FROM players"
+        df = pd.read_sql(query, conn)
+        conn.close()
+        
+        logging.info(f"Successfully loaded {len(df)} players from the database.")
+        return df
+        
+    except Exception as e:
+        logging.error(f"An error occurred while loading data from the database: {e}")
+        return None
 
-def load_athletic_projections(position: str, format: str) -> pd.DataFrame | None:
-    """Loads The Athletic's projections for a given position and format."""
-    file_path = config.DATA_DIR / "projections" / f"athletic_{position.lower()}_projections_{format.lower()}.csv"
-    if file_path.exists():
-        return pd.read_csv(file_path, sep='\t')
-    return None
 
 
 

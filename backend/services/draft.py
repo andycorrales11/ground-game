@@ -32,8 +32,8 @@ class Draft:
         Returns:
             The position of the drafted player if successful, otherwise None.
         """
-        # player_name is display_name. Find the corresponding row.
-        player_rows = self.players[self.players['display_name'] == player_name]
+        # player_name is normalized_name. Find the corresponding row.
+        player_rows = self.players[self.players['normalized_name'] == player_name]
         
         if player_rows.empty:
             return None # Player not found
@@ -43,7 +43,7 @@ class Draft:
             normalized_name = row['normalized_name']
             if normalized_name not in self.drafted_players:
                 self.drafted_players.add(normalized_name)
-                return row['position']
+                return row['pos']
 
         return None # Player already drafted
 
@@ -127,6 +127,6 @@ class Team:
         
         # Count how many have the specified position
         if not roster_details.empty:
-            count = roster_details[roster_details['position'] == pos].shape[0]
+            count = roster_details[roster_details['pos'] == pos].shape[0]
             
         return count
