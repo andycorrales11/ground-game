@@ -59,7 +59,7 @@ def simulate_cpu_pick(available_players: pd.DataFrame, team: Team, full_player_d
     scarcity = calculate_positional_scarcity(players)
     if scarcity:
         scarcest_position = max(scarcity, key=scarcity.get)
-        top_player_at_scarcest = players[players['pos'] == scarcest_position].sort_values(by='VORP', ascending=False).head(1)
+        top_player_at_scarcest = players[players['pos'] == scarcest_position].sort_values(by='ADP', ascending=False).head(1)
         if not top_player_at_scarcest.empty:
             player_index = top_player_at_scarcest.index[0]
             players.loc[player_index, 'draft_score'] -= 10
