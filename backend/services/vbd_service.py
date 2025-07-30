@@ -80,6 +80,9 @@ def calculate_vona(player_to_eval: pd.Series, draft_sim: Draft, teams_list_sim: 
     points_col = f"fantasy_points_{draft_sim.format.lower().replace('halfppr', 'half_ppr')}"
     player_points = player_to_eval[points_col]
     player_position = player_to_eval['pos']
+    logging.debug(f"VONA Calc: Evaluating {player_to_eval['display_name']} ({player_position}) with {player_points} points.")
+    logging.debug(f"VONA Calc: Picks to simulate: {picks_to_simulate}")
+
     # Simulate the picks
     for i in range(picks_to_simulate):
         pick_num = current_pick + i + 1
@@ -95,31 +98,41 @@ def calculate_vona(player_to_eval: pd.Series, draft_sim: Draft, teams_list_sim: 
         # Simulate the pick for the CPU team
         available_for_cpu = draft_sim.get_available_players()
         if available_for_cpu.empty:
+            logging.debug("VONA Calc: No more players available during simulation.")
             break # No more players to draft
 
         # Ensure VORP is calculated for the simulation frame
-        for position in ['QB', 'RB', 'WR', 'TE']:
+        for position in ['QB', 'RB', 'WR', 'TE']:# Only calculate VORP for skill positions
             available_for_cpu = calculate_vorp(available_for_cpu, position, teams=draft_sim.teams, format=draft_sim.format)
 
         cpu_pick_name = simulate_cpu_pick(available_for_cpu, cpu_team, full_player_df)
         pos = draft_sim.draft_player(utils.normalize_name(cpu_pick_name))
         if pos:
             cpu_team.add_player(cpu_pick_name, pos)
+            logging.debug(f"VONA Calc: Sim pick {pick_num}: CPU (Team {team_index + 1}) drafted {cpu_pick_name} ({pos})")
+        else:
+            logging.debug(f"VONA Calc: Sim pick {pick_num}: CPU (Team {team_index + 1}) failed to draft a player.")
+
 
     # After simulation, find the best available player at the same position
     remaining_players = draft_sim.get_available_players()
     best_remaining_at_pos = remaining_players[remaining_players['pos'] == player_position]
+    logging.debug(f"VONA Calc: Best remaining at {player_position}:\n{best_remaining_at_pos.head()}")
 
     if best_remaining_at_pos.empty:
+        logging.debug(f"VONA Calc: No players left at {player_position} after simulation. VONA set to 0.0.")
         # If no players are left at the position, the value is 0 per new requirement
         return 0.0
 
     next_best_points = best_remaining_at_pos.sort_values(by=points_col, ascending=False).iloc[0][points_col]
+    logging.debug(f"VONA Calc: Next best {player_position} points: {next_best_points}")
 
     vona_value = player_points - next_best_points
+    logging.debug(f"VONA Calc: Raw VONA value: {vona_value}")
 
     # If VONA is NaN or negative, set to 0
     if pd.isna(vona_value) or vona_value < 0:
+        logging.debug(f"VONA Calc: VONA is NaN or negative ({vona_value}). Setting to 0.0.")
         return 0.0
     else:
         return vona_value
