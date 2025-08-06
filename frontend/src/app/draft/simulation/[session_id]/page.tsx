@@ -34,7 +34,7 @@ export default function DraftPage() {
         position_filter: positionFilter === 'ALL' ? undefined : positionFilter,
         sort_by: sortBy,
       };
-      const response = await axios.get<DraftState>(`http://localhost:8000/draft/${session_id}/state`, { params });
+      const response = await axios.get<DraftState>(`http://localhost:8000/draft/simulation/${session_id}/state`, { params });
       setDraftState(response.data);
 
     } catch (err) {
@@ -55,7 +55,7 @@ export default function DraftPage() {
 
     setIsProcessing(true); // Set processing to true
     try {
-      await axios.post(`http://localhost:8000/draft/${session_id}/pick`, {
+      await axios.post(`http://localhost:8000/draft/simulation/${session_id}/pick`, {
         player_name: playerToPick,
       });
       setPlayerToPick('');
@@ -73,7 +73,7 @@ export default function DraftPage() {
 
     setIsProcessing(true); // Set processing to true
     try {
-      await axios.post(`http://localhost:8000/draft/${session_id}/simulate-pick`);
+      await axios.post(`http://localhost:8000/draft/simulation/${session_id}/simulate-pick`);
       fetchDraftState(); // Refresh state after CPU pick
     } catch (err) {
       console.error('Error simulating pick:', err);

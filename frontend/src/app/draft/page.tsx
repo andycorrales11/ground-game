@@ -24,12 +24,12 @@ export default function StartPage() {
     e.preventDefault();
     setIsProcessing(true); // Set processing to true
     try {
-      const response = await axios.post('http://localhost:8000/draft/start', {
+      const response = await axios.post('http://localhost:8000/draft/helper/start', {
         pick_slot: parseInt(livePickSlot),
         draft_id: liveDraftId,
       });
       const { session_id } = response.data;
-      router.push(`/draft/${session_id}`);
+      router.push(`/draft/simulation/${session_id}`);
     } catch (error) {
       console.error('Error starting live draft:', error);
       alert('Failed to start live draft. Please check the console for details.');
@@ -42,7 +42,7 @@ export default function StartPage() {
     e.preventDefault();
     setIsProcessing(true); // Set processing to true
     try {
-      const response = await axios.post('http://localhost:8000/draft/start', {
+      const response = await axios.post('http://localhost:8000/draft/simulation/start', {
         pick_slot: parseInt(simPickSlot),
         teams: parseInt(simTeams),
         rounds: parseInt(simRounds),
@@ -50,7 +50,7 @@ export default function StartPage() {
         order: simOrder,
       });
       const { session_id } = response.data;
-      router.push(`/draft/${session_id}`);
+      router.push(`/draft/simulation/${session_id}`);
     } catch (error) {
       console.error('Error starting simulation:', error);
       alert('Failed to start simulation. Please check the console for details.');
