@@ -9,7 +9,7 @@ from backend.services.vbd_service import create_vbd_big_board, calculate_vona
 from backend.services.draft_service import get_user_picks
 from backend.services.simulation_service import simulate_cpu_pick, simulate_user_auto_pick
 from backend.services import sleeper_service, data_service
-from backend.utils import normalize_name
+from backend.utils import normalize_name, normalize_scoring_format
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -137,7 +137,7 @@ class DraftManagerService:
             logging.info("--- Draft Simulation Mode ---")
             draft_teams = teams or config.DEFAULT_TEAMS
             draft_rounds = rounds or config.DEFAULT_ROUNDS
-            draft_format = (format or config.DEFAULT_DRAFT_FORMAT).upper()
+            draft_format = normalize_scoring_format(format, default=config.DEFAULT_DRAFT_FORMAT)
             draft_order = order or 'snake'
             user_picks = get_user_picks(pick_slot, draft_order, draft_teams, draft_rounds)
             logging.info(f"Your simulated picks are at positions: {user_picks}")

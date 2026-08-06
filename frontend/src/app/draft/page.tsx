@@ -6,12 +6,8 @@ import axios from 'axios'; // Import axios
 
 export default function StartPage() {
   const router = useRouter();
-  const [mode, setMode] = useState<null | 'simulation' | 'live'>(null);
+  const [mode, setMode] = useState<null | 'simulation'>(null);
   const [isProcessing, setIsProcessing] = useState(false); // New state for processing indicator
-
-  // State for Live Draft Helper
-  const [liveDraftId, setLiveDraftId] = useState('');
-  const [livePickSlot, setLivePickSlot] = useState('1');
 
   // State for Simulation
   const [simPickSlot, setSimPickSlot] = useState('1');
@@ -19,24 +15,6 @@ export default function StartPage() {
   const [simRounds, setSimRounds] = useState('15');
   const [simFormat, setSimFormat] = useState('STD');
   const [simOrder, setSimOrder] = useState('snake');
-
-  const handleStartLiveDraft = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsProcessing(true); // Set processing to true
-    try {
-      const response = await axios.post('http://localhost:8000/draft/helper/start', {
-        pick_slot: parseInt(livePickSlot),
-        draft_id: liveDraftId,
-      });
-      const { session_id } = response.data;
-      router.push(`/draft/simulation/${session_id}`);
-    } catch (error) {
-      console.error('Error starting live draft:', error);
-      alert('Failed to start live draft. Please check the console for details.');
-    } finally {
-      setIsProcessing(false); // Set processing to false
-    }
-  };
 
   const handleStartSimulation = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -79,55 +57,13 @@ export default function StartPage() {
             Start Simulation
           </button>
           <button
-            onClick={() => setMode('live')}
+            onClick={() => router.push('/draft/helper')}
             style={{ padding: '12px 25px', fontSize: '16px', cursor: 'pointer', backgroundColor: '#1c872b', color: 'white', border: 'none', borderRadius: '5px' }}
             disabled={isProcessing} // Disable while processing
           >
             Start Live Draft Helper
           </button>
         </div>
-      )}
-
-      {mode === 'live' && (
-        <form onSubmit={handleStartLiveDraft} style={{ marginTop: '30px', padding: '20px', border: '1px solid #eee', borderRadius: '8px', backgroundColor: '#f9f9f9' }}>
-          <h2 style={{ textAlign: 'center', color: '#222' }}>Live Draft Helper</h2>
-          <div style={{ marginBottom: '15px' }}>
-            <label htmlFor="liveDraftId" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold', color: '#333' }}>Sleeper Draft ID:</label>
-            <input
-              type="text"
-              id="liveDraftId"
-              value={liveDraftId}
-              onChange={(e) => setLiveDraftId(e.target.value)}
-              required
-              style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px', color: '#333' }}
-              disabled={isProcessing} // Disable while processing
-            />
-          </div>
-          <div style={{ marginBottom: '15px' }}>
-            <label htmlFor="livePickSlot" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold', color: '#333' }}>Your Pick Slot (1-based):</label>
-            <input
-              type="number"
-              id="livePickSlot"
-              value={livePickSlot}
-              onChange={(e) => setLivePickSlot(e.target.value)}
-              min="1"
-              required
-              style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px', color: '#333'  
-               }}
-              disabled={isProcessing} // Disable while processing
-            />
-          </div>
-          <button type="submit" style={{ width: '100%', padding: '10px', fontSize: '16px', backgroundColor: '#1c872b', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
-            disabled={isProcessing} // Disable while processing
-          >
-            Start Live Draft
-          </button>
-          <button type="button" onClick={() => setMode(null)} style={{ width: '100%', padding: '10px', fontSize: '16px', backgroundColor: '#ccc', color: '#333', border: 'none', borderRadius: '5px', cursor: 'pointer', marginTop: '10px' }}
-            disabled={isProcessing} // Disable while processing
-          >
-            Back
-          </button>
-        </form>
       )}
 
       {mode === 'simulation' && (
@@ -182,7 +118,7 @@ export default function StartPage() {
               disabled={isProcessing} // Disable while processing
             >
               <option value="STD">Standard</option>
-              <option value="HALF_PPR">Half-PPR</option>
+              <option value="HalfPPR">Half-PPR</option>
               <option value="PPR">PPR</option>
             </select>
           </div>

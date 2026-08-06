@@ -29,10 +29,10 @@ def calculate_vorp(
     Returns:
         The original DataFrame with a 'VORP' column updated for the specified position.
     """
-    if format not in ['STD', 'PPR', 'HalfPPR']:
+    if format not in utils.SCORING_FORMATS:
         raise ValueError(f"Unsupported format: {format}")
 
-    points_column = f"fantasy_points_{format.lower()}"
+    points_column = utils.points_column(format)
     if points_column not in df.columns:
         raise KeyError(f"Points column '{points_column}' not found in DataFrame.")
 
@@ -82,7 +82,7 @@ def calculate_vona(player_to_eval: pd.Series, draft_sim: Draft, teams_list_sim: 
     If the calculated VONA is NaN or negative, it returns 0.
     """
     # Get the points and position of the player being evaluated
-    points_col = f"fantasy_points_{draft_sim.format.lower().replace('halfppr', 'half_ppr')}"
+    points_col = utils.points_column(draft_sim.format)
     player_points = player_to_eval[points_col]
     player_position = player_to_eval['pos']
     logging.debug(f"VONA Calc: Evaluating {player_to_eval['display_name']} ({player_position}) with {player_points} points.")
@@ -173,7 +173,7 @@ def create_vbd_big_board(season: int = 2024, format: str = config.DEFAULT_DRAFT_
         base_df['ADP'] = None
 
     # Rename the format-specific projection column to the generic 'fantasy_points' name expected by VORP calculation
-    fantasy_points_col = f"fantasy_points_{format.lower().replace('halfppr', 'half_ppr')}"
+    fantasy_points_col = utils.points_column(format)
     if proj_column and proj_column in base_df.columns:
         base_df.rename(columns={proj_column: fantasy_points_col}, inplace=True)
     else:

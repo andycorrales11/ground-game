@@ -1,8 +1,19 @@
 
 import pytest
+import numpy as np
 import pandas as pd
 from backend.services.simulation_service import simulate_cpu_pick, calculate_draft_score
 from backend.services.draft import Team
+
+
+@pytest.fixture(autouse=True)
+def _seeded_rng():
+    """
+    simulate_cpu_pick samples from the top 10 via np.random.choice, so the tests
+    below were failing roughly one run in eight. Seed it so they are reproducible.
+    """
+    np.random.seed(0)
+
 
 def create_test_player_df():
     """Creates a sample DataFrame of players for testing."""
