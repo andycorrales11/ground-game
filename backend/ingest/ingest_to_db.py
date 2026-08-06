@@ -26,6 +26,21 @@ ADP_FORMATS = {
     "PPR": "ppr_adp",
 }
 
+# FantasyPros has shipped at least two different export layouts. Try each naming
+# convention in turn so a season's files work whichever export was downloaded.
+ADP_FILENAME_PATTERNS = [
+    "FantasyPros_{season}_Overall_ADP_Rankings_{label}.csv",  # 2026 "Overall ADP Rankings"
+    "FantasyPros_{season}_{label}_ADP.csv",                   # 2025 "ADP" export
+]
+
+# "Jahmyr Gibbs   DET (6)" -> name / team / bye. The team and bye are optional:
+# unsigned free agents are listed as a bare name. Defenses come through as
+# "Houston Texans DST   (8)", which lands team="DST" -- the same placeholder the
+# older export used, so DEFENSE_TEAM_ABBR still resolves them.
+PLAYER_BYE_RE = re.compile(
+    r"^(?P<name>.+?)(?:\s+(?P<team>[A-Z]{2,3})\s*\((?P<bye>\d+)\))?$"
+)
+
 # e.g. athletic_qb_projections_halfppr.csv
 PROJ_FILE_RE = re.compile(
     r"^athletic_(?P<pos>[a-z]+)_projections_(?P<fmt>std|ppr|halfppr)\.csv$",
@@ -85,6 +100,55 @@ def get_sleeper_ids():
     return player_ids_df
 
 
+def _resolve_adp_file(season: int, label: str, adp_dir: Path) -> Path:
+    """Finds a season's ADP file under any of the known FantasyPros naming conventions."""
+    tried = []
+    for pattern in ADP_FILENAME_PATTERNS:
+        path = adp_dir / pattern.format(season=season, label=label)
+        if path.exists():
+            return path
+        tried.append(path.name)
+    raise FileNotFoundError(
+        f"No {label} ADP file for {season} in {adp_dir}.\n"
+        f"Looked for: {', '.join(tried)}\n"
+        f"Download the {season} FantasyPros ADP CSVs (Standard, Half PPR, PPR) into that directory."
+    )
+
+
+def _normalize_adp_frame(df: pd.DataFrame, source: str) -> pd.DataFrame:
+    """
+    Reduces either FantasyPros export layout to Player / POS / Team / AVG.
+
+    The newer "Overall ADP Rankings" export drops the Team and Bye columns and
+    folds them into the player cell ("Jahmyr Gibbs   DET (6)"), and carries a
+    variable set of per-site columns that differ between the three files.
+    """
+    if "AVG" not in df.columns or "POS" not in df.columns:
+        raise ValueError(f"{source} is missing expected columns: needs POS and AVG")
+
+    if "Player" in df.columns and "Team" in df.columns:
+        return df[["Player", "POS", "Team", "AVG"]].copy()
+
+    if "Player (Bye)" not in df.columns:
+        raise ValueError(
+            f"{source} has neither a 'Player'+'Team' pair nor a 'Player (Bye)' column. "
+            f"Columns present: {list(df.columns)}"
+        )
+
+    parts = df["Player (Bye)"].astype(str).str.strip().str.extract(PLAYER_BYE_RE)
+    out = pd.DataFrame({
+        "Player": parts["name"].str.strip(),
+        "POS": df["POS"],
+        "Team": parts["team"],  # NaN for unsigned free agents
+        "AVG": df["AVG"],
+    })
+
+    unsigned = int(out["Team"].isna().sum())
+    if unsigned:
+        print(f"    {source}: {unsigned} row(s) with no team (unsigned free agents)")
+    return out
+
+
 def load_adp_data(season: int, adp_dir: Path) -> pd.DataFrame:
     """
     Loads the three FantasyPros ADP CSVs and merges them into a single frame.
@@ -95,17 +159,10 @@ def load_adp_data(season: int, adp_dir: Path) -> pd.DataFrame:
     """
     frames = {}
     for label, adp_col in ADP_FORMATS.items():
-        path = adp_dir / f"FantasyPros_{season}_{label}_ADP.csv"
-        if not path.exists():
-            raise FileNotFoundError(
-                f"Missing ADP file: {path}\n"
-                f"Download the {season} FantasyPros ADP CSVs (Standard, Half PPR, PPR) into {adp_dir}."
-            )
-        df = pd.read_csv(path)
-        missing = {"Player", "POS", "Team", "AVG"} - set(df.columns)
-        if missing:
-            raise ValueError(f"{path.name} is missing expected columns: {sorted(missing)}")
-        frames[adp_col] = df[["Player", "POS", "Team", "AVG"]].rename(columns={"AVG": adp_col})
+        path = _resolve_adp_file(season, label, adp_dir)
+        df = _normalize_adp_frame(pd.read_csv(path), path.name)
+        print(f"  {label:<8} {len(df):>4} rows from {path.name}")
+        frames[adp_col] = df.rename(columns={"AVG": adp_col})
 
     # First non-null POS/Team across all three files wins.
     identity = pd.concat(
