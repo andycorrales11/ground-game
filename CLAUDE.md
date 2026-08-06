@@ -119,7 +119,12 @@ Formats are **columns**, not rows: `std_adp`/`half_ppr_adp`/`ppr_adp` and `std_p
 
 ### Name matching
 
-`sleeper_id` is the primary key, but joins across sources go through `normalized_name` (`backend/utils.py` — strips suffixes, lowercases, underscores). `ingest_to_db.py` carries a manual `name_map` for players nflverse and FantasyPros disagree on (e.g. `"Deebo Samuel Sr."`). Live-draft pick matching converts Sleeper's player IDs via `str(float(player_id))` to match the stored string ID.
+`sleeper_id` is the primary key, and **projections now join on it** rather than on a name — that path has no name matching at all. What still goes through names:
+
+- Resolving a FantasyPros ADP row to a Sleeper id, via `nfl.import_ids()` plus the manual `NAME_MAP` for players nflverse and FantasyPros spell differently (e.g. `"Deebo Samuel Sr."`).
+- `create_vbd_big_board` joining on `normalized_name` (`backend/utils.py` — strips suffixes, lowercases, underscores).
+
+**Store ids in Sleeper's own form** (`"4034"`, and the bare abbreviation for defenses). `nfl.import_ids()` returns them numerically, so a plain `str()` yields `"4034.0"` and silently fails to match the feed — `canonical_sleeper_id()` strips that. Live-draft pick matching tries both forms, so it tolerates either.
 
 **Inconsistency to watch:** `Team.add_player()` is called with *normalized* names in `draft_manager_service`, but `Team.count_players_at_position()` looks players up by `display_name`. The lookup never matches, so the CPU's QB-count penalty does not currently fire.
 
@@ -127,14 +132,23 @@ Formats are **columns**, not rows: `std_adp`/`half_ppr_adp`/`ppr_adp` and `std_p
 
 Two pipelines exist and only one feeds the app:
 
-1. **`ingest/ingest_to_db.py`** — reads `data/fantasy_pros_adp/*.csv` and `data/projections/*.csv` (tab-separated despite the `.csv` extension), joins them, resolves Sleeper IDs, then `TRUNCATE`s and bulk-`COPY`s into Postgres. **This is what the running app reads.**
+1. **`ingest/ingest_to_db.py`** — **ADP** from `data/fantasy_pros_adp/*.csv`, **projections** from Sleeper's live feed, joined on `sleeper_id`, then `TRUNCATE` + bulk-`COPY` into Postgres. **This is what the running app reads.**
 2. **`ingest/ingest_all.py`** (`ingest_players` → `ingest_adp` → `ingest_stats`) — pulls from the Sleeper players API and nflverse via `nfl_data_py`, writing parquet into `data/`. No runtime code path reads these parquet files; `data_service.load_player_data()` reads only from Postgres.
 
-`ingest_to_db.py` takes its season from `config.SEASON` (default 2026, overridable with the `GG_SEASON` env var) and raises a `FileNotFoundError` naming the missing path if the CSVs for that season aren't present. Run against a different year without editing code:
+**Projections come from `ingest/sleeper_projections.py`**, not from CSVs. One request to `api.sleeper.com/projections/nfl/{season}` returns all three scoring formats keyed by Sleeper id, so projections join on the primary key rather than on a name. It also covers K and DEF, which the Athletic CSVs never did.
+
+The Athletic CSV path still exists behind `GG_PROJECTIONS=csv`, purely so the two boards can be diffed. It joins by `display_name` and is the older, more fragile route.
 
 ```powershell
+# Default: FantasyPros ADP + Sleeper projections
+.\.venv\Scripts\python.exe -m backend.ingest.ingest_to_db
+
+# A past season, or the CSV projection source
 $env:GG_SEASON = "2025"; .\.venv\Scripts\python.exe -m backend.ingest.ingest_to_db
+$env:GG_PROJECTIONS = "csv"; .\.venv\Scripts\python.exe -m backend.ingest.ingest_to_db
 ```
+
+**FantasyPros changes its export layout between seasons.** `ADP_FILENAME_PATTERNS` holds the known filename conventions and `_normalize_adp_frame` reduces either column layout to `Player/POS/Team/AVG`. The 2026 export folds team and bye into the player cell (`"Jahmyr Gibbs   DET (6)"`), omits `Team` and `Bye`, and carries a per-site column set that differs between the three files. Expect to add a pattern rather than rewrite the loader.
 
 Season values are still hardcoded in the unused parquet pipeline: `ingest_stats.py` defaults to `season=2024` and `ingest_adp.py` hardcodes `FantasyPros_2025_*`.
 

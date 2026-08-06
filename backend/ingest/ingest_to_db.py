@@ -8,6 +8,8 @@ from dotenv import load_dotenv
 import nfl_data_py as nfl
 
 from backend import config
+from backend.ingest import sleeper_projections
+from backend.ingest.sleeper_projections import canonical_sleeper_id
 from backend.utils import normalize_name
 
 # Load environment variables from .env file
@@ -234,57 +236,104 @@ def load_projection_data(proj_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     return projections, hint_df
 
 
-def prepare_data(season: int | None = None) -> pd.DataFrame:
-    """Reads and prepares player data from CSV files."""
-    season = season or config.SEASON
-    print(f"Preparing data for the {season} season.")
+def _merge_sleeper_projections(board: pd.DataFrame, season: int) -> pd.DataFrame:
+    """
+    Joins Sleeper projections onto the ADP board by Sleeper id.
 
-    adp_data = load_adp_data(season, config.ADP_DIR)
+    Players Sleeper projects but FantasyPros does not list are kept: they have no
+    ADP, so they sort to the bottom of the board, but they are the deep-league and
+    waiver pool. Their name, team and position come from Sleeper.
+    """
+    projections = sleeper_projections.fetch_projections(season)
+    print(f"  Sleeper returned {len(projections)} projected players.")
+
+    merged = pd.merge(board, projections, on="sleeper_id", how="outer", suffixes=("", "_sleeper"))
+
+    # The ADP file is authoritative for anyone it lists; Sleeper fills the rest.
+    for column in ("display_name", "team", "pos"):
+        merged[column] = merged[column].fillna(merged[f"{column}_sleeper"])
+    merged.drop(columns=[f"{c}_sleeper" for c in ("display_name", "team", "pos")], inplace=True)
+
+    matched = int(board["sleeper_id"].isin(projections["sleeper_id"]).sum())
+    drafted = int(board["sleeper_id"].notna().sum())
+    print(f"  Matched projections for {matched}/{drafted} players with an ADP.")
+    if drafted and matched / drafted < 0.8:
+        print("    Warning: under 80% matched -- check that the season and ids line up.")
+
+    return merged
+
+
+def _merge_csv_projections(board: pd.DataFrame) -> pd.DataFrame:
+    """Joins the Athletic projection CSVs onto the ADP board by display name."""
     projections, hints = load_projection_data(config.PROJECTIONS_DIR)
 
-    # --- Merge ADP and projections ---
-    merged = pd.merge(
-        adp_data, projections, left_on="Player", right_on="display_name", how="outer"
-    )
-    merged["display_name"] = merged["display_name"].fillna(merged["Player"])
-    merged.drop(columns=["Player"], inplace=True)
+    merged = pd.merge(board, projections, on="display_name", how="outer")
     merged = pd.merge(merged, hints, on="display_name", how="left")
 
-    # --- Position ---
-    # FantasyPros encodes positional rank in POS ("WR12"); strip it. Fall back to
-    # the position implied by the projection filename, then normalize FantasyPros'
-    # "DST" to the "DEF" used by config.DEFAULT_ROSTER.
-    pos_from_adp = merged["POS"].str.replace(r"\d+$", "", regex=True)
-    merged["pos"] = pos_from_adp.fillna(merged["pos_hint"])
-    merged["pos"] = merged["pos"].replace({"DST": "DEF", "D/ST": "DEF"})
-
-    # --- Team ---
-    # Fall back to the projections' TM column, then resolve defenses, whose Team
-    # column is the useless literal "DST".
-    merged.rename(columns={"Team": "team"}, inplace=True)
+    # Projection-only rows have no ADP row to take position and team from, so fall
+    # back to what the projection filenames and TM column implied.
+    merged["pos"] = merged["pos"].fillna(merged["pos_hint"]).replace({"DST": "DEF", "D/ST": "DEF"})
     merged["team"] = merged["team"].fillna(merged["team_hint"])
-    is_def = merged["pos"] == "DEF"
-    merged.loc[is_def, "team"] = merged.loc[is_def, "display_name"].map(DEFENSE_TEAM_ABBR)
-    unmapped_def = merged[is_def & merged["team"].isna()]
+    merged.drop(columns=["pos_hint", "team_hint"], inplace=True)
+    return merged
+
+
+def _build_adp_board(season: int) -> pd.DataFrame:
+    """ADP, position, team and resolved Sleeper id for every drafted player."""
+    adp_data = load_adp_data(season, config.ADP_DIR)
+    board = adp_data.rename(columns={"Player": "display_name", "Team": "team"})
+
+    # FantasyPros encodes positional rank in POS ("WR12"); strip it, then normalize
+    # its "DST" to the "DEF" used by config.DEFAULT_ROSTER.
+    board["pos"] = board["POS"].str.replace(r"\d+$", "", regex=True)
+    board["pos"] = board["pos"].replace({"DST": "DEF", "D/ST": "DEF"})
+    board.drop(columns=["POS"], inplace=True)
+
+    # Defenses carry the literal "DST" in the team column, so resolve them by name.
+    is_def = board["pos"] == "DEF"
+    board.loc[is_def, "team"] = board.loc[is_def, "display_name"].map(DEFENSE_TEAM_ABBR)
+    unmapped_def = board[is_def & board["team"].isna()]
     if not unmapped_def.empty:
         print("\n  Warning: unrecognized defense name(s), add them to DEFENSE_TEAM_ABBR:")
         for name in unmapped_def["display_name"]:
             print(f"    - {name}")
 
-    merged["normalized_name"] = merged["display_name"].apply(normalize_name)
-
     # --- Sleeper IDs ---
     player_ids = get_sleeper_ids()
     id_map = dict(zip(player_ids["name"], player_ids["sleeper_id"]))
-    merged["sleeper_id"] = merged["display_name"].apply(
-        lambda name: id_map.get(NAME_MAP.get(name, name))
+    board["sleeper_id"] = board["display_name"].apply(
+        lambda name: canonical_sleeper_id(id_map.get(NAME_MAP.get(name, name)))
     )
-
     # nfl_data_py only covers players, so team defenses never resolve. Sleeper keys
     # defenses by the team abbreviation itself ("DEN"), so use that as the id.
-    merged.loc[is_def, "sleeper_id"] = merged.loc[is_def, "team"]
+    board.loc[is_def, "sleeper_id"] = board.loc[is_def, "team"]
 
-    merged.drop_duplicates(subset=["sleeper_id"], keep="first", inplace=True)
+    return board.drop_duplicates(subset=["sleeper_id"], keep="first")
+
+
+def prepare_data(season: int | None = None, projection_source: str | None = None) -> pd.DataFrame:
+    """
+    Builds the players table from FantasyPros ADP plus a projection source.
+
+    Projections come from Sleeper by default, which covers every scoring format in
+    one request and joins on the Sleeper id rather than on a name. Set
+    GG_PROJECTIONS=csv to fall back to the Athletic CSVs instead, which is useful
+    for diffing the two boards against each other.
+    """
+    season = season or config.SEASON
+    source = (projection_source or os.getenv("GG_PROJECTIONS", "sleeper")).lower()
+    print(f"Preparing data for the {season} season (projections: {source}).")
+
+    board = _build_adp_board(season)
+
+    if source == "sleeper":
+        merged = _merge_sleeper_projections(board, season)
+    elif source == "csv":
+        merged = _merge_csv_projections(board)
+    else:
+        raise ValueError(f"Unknown projection source '{source}'. Use 'sleeper' or 'csv'.")
+
+    merged["normalized_name"] = merged["display_name"].apply(normalize_name)
 
     final_data = merged.reindex(columns=DB_COLUMNS).copy()
 
