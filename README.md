@@ -1,6 +1,6 @@
 # Ground Game - Fantasy Football Draft Helper
 
-Ground Game is a fantasy football draft helper that leverages a Value-Based Drafting (VBD) model to provide data-driven insights during your fantasy draft. The application is currently in the backend development phase, with a command-line interface (CLI) to access the core logic.
+Ground Game is a fantasy football draft helper that leverages a Value-Based Drafting (VBD) model to provide data-driven insights during your fantasy draft. It runs as a FastAPI backend serving a Next.js web UI, and supports both draft simulation against CPU opponents and live assistance during a real Sleeper draft.
 
 ## Backend Functionality
 
@@ -29,19 +29,31 @@ The application includes a full draft simulation engine that can be accessed via
 
 *   **Snake and Standard Drafts**: Supports both snake and standard draft formats.
 *   **CPU Logic**: CPU-controlled teams make intelligent picks based on a combination of Best Player Available (BPA), positional need, and positional scarcity.
-*   **Interactive Draft Room**: The CLI provides an interactive draft room where you can see the best available players, filter by position, and make your picks.
+*   **Interactive Draft Room**: The web UI provides an interactive draft room where you can see the best available players, filter by position, and make your picks.
 
 ## How to Run the Application
 
-1.  **Install Dependencies**:
+Requires Python 3.10+ (the codebase uses PEP 604 union syntax), Node.js, and PostgreSQL.
+
+1.  **Install dependencies**:
     ```bash
     pip install -r requirements.txt
+    cd frontend && npm install
     ```
-2.  **Run the Draft**:
+2.  **Set up the database**. Create a PostgreSQL database, apply the schema, and populate `.env`
+    with `DB_HOST`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD`:
     ```bash
-    python api.py <your_pick_number> --teams <num_teams> --format <PPR|HalfPPR|STD>
+    psql -d ground_game_db -f schema.sql
     ```
-    For example, to start a 12-team PPR draft where you have the 3rd pick, you would run:
+3.  **Ingest player data** (expects FantasyPros ADP and projection CSVs under `data/`):
     ```bash
-    python api.py 3 --teams 12 --format PPR
+    python -m backend.ingest.ingest_to_db
+    ```
+4.  **Start the backend** (from the repository root):
+    ```bash
+    uvicorn backend.main:app --reload --port 8000
+    ```
+5.  **Start the frontend** in a second terminal, then open http://localhost:3000:
+    ```bash
+    cd frontend && npm run dev
     ```
