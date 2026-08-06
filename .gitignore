@@ -188,3 +188,5 @@ cython_debug/
 
 .vscode/
 data/
+
+CLAUDE.md
