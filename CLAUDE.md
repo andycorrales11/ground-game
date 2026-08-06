@@ -42,7 +42,7 @@ python -m backend.ingest.ingest_all      # API/parquet pipeline -> data/
 python -m backend.print_db_data          # inspect what's in the players table
 ```
 
-`backend/tests/vorp_test.py` and `vona_test.py` are **not** standard pytest tests — `vorp_test.py` is a print-based script (`python -m backend.tests.vorp_test`), and both hit the live database rather than fixtures.
+`backend/tests/vorp_test.py` is **not** a standard pytest test — it is a print-based script (`python -m backend.tests.vorp_test`) that hits the live database rather than fixtures, so exclude it: `pytest backend/tests/ --ignore=backend/tests/vorp_test.py`. Everything else runs without a database.
 
 ### Environment
 
@@ -93,7 +93,11 @@ The same snake-order calculation is reimplemented in four places (`draft_manager
 `backend/services/vbd_service.py`:
 
 - **VORP** — points above the replacement-level player at that position. Replacement level is `(starters × teams) + (flex × teams × 0.5)` for RB/WR (hardcoded 50/50 flex split), `starters × teams` otherwise. Result is scaled by `config.POSITION_ADJUSTMENT` (QB is dampened to 0.8). Only computed for QB/RB/WR/TE — K and DEF always have VORP 0.
-- **VONA** — value over next available. Runs a *real forward simulation* of every CPU pick until the user's next turn, then compares the candidate against the best remaining player at the same position. This is expensive: `_calculate_and_store_vona` runs a full simulation per candidate and is capped to the **top 50 players by ADP**. It is recalled after every pick and whenever it becomes the user's turn.
+- **VONA** — value over next available. Runs a *real forward simulation* of every CPU pick until the user's next turn, then compares the candidate against the best remaining player at the same position.
+
+  **The forward simulation does not depend on the candidate** — the candidate only enters in the final subtraction. So `calculate_vona_board` runs the simulation once (`VONA_SIMULATION_RUNS = 5`, averaged to damp the CPU randomness) and scores the whole board against that one expected outcome. Do not reintroduce a per-candidate simulation: it is ~11× slower *and* makes the column internally incomparable, because each player would be scored against a different random future.
+
+  `_ensure_vona` caches the result against `(current_pick_num, len(drafted_players))`. `get_current_draft_state` is hit on every filter change and every live-draft poll, so recomputing unconditionally is what made the UI feel frozen.
 
 `create_vbd_big_board()` loads the whole `players` table and renames the format-specific columns (`ppr_adp` → `ADP`, `ppr_proj_pts` → `fantasy_points_ppr`) into the generic names the rest of the pipeline expects.
 
