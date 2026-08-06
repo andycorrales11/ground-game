@@ -114,7 +114,22 @@ Two pipelines exist and only one feeds the app:
 1. **`ingest/ingest_to_db.py`** — reads `data/fantasy_pros_adp/*.csv` and `data/projections/*.csv` (tab-separated despite the `.csv` extension), joins them, resolves Sleeper IDs, then `TRUNCATE`s and bulk-`COPY`s into Postgres. **This is what the running app reads.**
 2. **`ingest/ingest_all.py`** (`ingest_players` → `ingest_adp` → `ingest_stats`) — pulls from the Sleeper players API and nflverse via `nfl_data_py`, writing parquet into `data/`. No runtime code path reads these parquet files; `data_service.load_player_data()` reads only from Postgres.
 
-Season values are hardcoded: `ingest_stats.py` defaults to `season=2024`, and `ingest_adp.py` / `ingest_to_db.py` hardcode `FantasyPros_2025_*` filenames.
+`ingest_to_db.py` takes its season from `config.SEASON` (default 2026, overridable with the `GG_SEASON` env var) and raises a `FileNotFoundError` naming the missing path if the CSVs for that season aren't present. Run against a different year without editing code:
+
+```powershell
+$env:GG_SEASON = "2025"; .\.venv\Scripts\python.exe -m backend.ingest.ingest_to_db
+```
+
+Season values are still hardcoded in the unused parquet pipeline: `ingest_stats.py` defaults to `season=2024` and `ingest_adp.py` hardcodes `FantasyPros_2025_*`.
+
+### Ingest invariants
+
+These were all bugs at one point; keep them true.
+
+- **NaN must never reach the database.** `prepare_data` ends with `.astype(object).where(pd.notna(...), None)` so missing values land as SQL `NULL`. Written as raw pandas NaN through `COPY`, they become the literal string `'nan'` in varchar columns and IEEE `NaN` in `double precision` columns — and `IS NULL` matches neither, so the data looks clean while being garbage.
+- **`pos` and `team` are coalesced across all three ADP files**, then fall back to the position/team encoded in the projection filenames. Reading them from the STD file alone leaves ~20% of the board positionless.
+- **Defenses need special handling.** FantasyPros lists them by full team name with `Team` set to the literal `"DST"`, and `nfl.import_ids()` doesn't cover them. `DEFENSE_TEAM_ABBR` maps the name to the abbreviation, which becomes both `team` and `sleeper_id` (Sleeper keys defenses by abbreviation). Position is normalized `DST` → `DEF` to match `config.DEFAULT_ROSTER`.
+- **API responses must be NaN-free.** `_json_safe_records` in `draft_manager_service` converts NaN to `None` before serialization; `json.dumps` emits a bare `NaN` literal that `JSON.parse` rejects. K and DEF rows have no projections, so filtering to those positions is what triggers it.
 
 ## Known stale code
 

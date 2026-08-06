@@ -1,5 +1,11 @@
+import os
 from pathlib import Path
 from typing import List
+
+# --- SEASON ---
+# The season the ingest reads CSVs for. Override without editing code by setting
+# GG_SEASON in the environment (e.g. GG_SEASON=2027).
+SEASON: int = int(os.getenv("GG_SEASON", "2026"))
 
 # --- DIRECTORIES ---
 CWD = Path.cwd()
@@ -7,6 +13,7 @@ DATA_DIR = CWD / "data"
 PLAYERS_DIR = DATA_DIR / "sleeper_players"
 STATS_DIR = DATA_DIR / "nfl_stats"
 ADP_DIR = DATA_DIR / "fantasy_pros_adp"
+PROJECTIONS_DIR = DATA_DIR / "projections"
 PLAYER_ADP_DIR = DATA_DIR / "players_adp"
 
 # --- DRAFT SETTINGS ---

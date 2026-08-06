@@ -54,17 +54,22 @@ def calculate_vorp(
     df_pos = df[df['pos'] == position].copy()
     df_pos.sort_values(by=points_column, ascending=False, inplace=True)
 
-    # Find the replacement player
-    if len(df_pos) > replacement_level:
-        replacement_player = df_pos.iloc[replacement_level]
-        replacement_value = replacement_player[points_column]
+    # Find the replacement player. Players with no projection are excluded from the
+    # ranking first -- a NaN landing on the replacement index would otherwise make
+    # every VORP at the position NaN.
+    ranked = df_pos[df_pos[points_column].notna()]
+    if len(ranked) > replacement_level:
+        replacement_value = ranked.iloc[replacement_level][points_column]
     else:
         replacement_value = 0 # No replacement player found, so VORP is just their score
 
-    # Calculate VORP for the position, applying the positional adjustment
+    # Calculate VORP for the position, applying the positional adjustment.
+    # Unprojected players fall back to 0 rather than NaN, which is not valid JSON.
     adjustment_factor = config.POSITION_ADJUSTMENT.get(position, 1.0)
-    df_pos['VORP_pos'] = (df_pos[points_column] - replacement_value) * adjustment_factor
-    
+    df_pos['VORP_pos'] = (
+        (df_pos[points_column] - replacement_value) * adjustment_factor
+    ).fillna(0.0)
+
     # Update the main DataFrame's VORP column for the specific position
     df.loc[df_pos.index, 'VORP'] = df_pos['VORP_pos']
     

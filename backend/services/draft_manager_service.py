@@ -14,6 +14,18 @@ from backend.utils import normalize_name
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+
+def _json_safe_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
+    """
+    Converts a DataFrame to records with every NaN replaced by None.
+
+    json.dumps serializes float('nan') as a bare NaN literal, which JSON.parse
+    rejects, so a single missing ADP or projection in the response would break the
+    whole draft board.
+    """
+    return df.astype(object).where(pd.notna(df), None).to_dict(orient="records")
+
+
 class DraftManagerService:
     _active_draft_sessions: Dict[str, Dict[str, Any]] = {}
 
@@ -262,7 +274,7 @@ class DraftManagerService:
             available_players.loc[available_players['display_name'] == player_name, 'VONA'] = vona_value
 
         # Limit for display after filtering and sorting
-        available_players_display = available_players.head(50).to_dict(orient="records")
+        available_players_display = _json_safe_records(available_players.head(50))
         
         return {
             "session_id": session_id,
@@ -398,7 +410,17 @@ class DraftManagerService:
                 roster_id = pick.get('roster_id') or slot_to_roster_id.get(str(pick.get('draft_slot')))
                 if not player_id or not roster_id: continue
                 
-                player_info = original_big_board.loc[original_big_board['sleeper_id'] == str(float(player_id))]
+                # Sleeper sends numeric ids for players ("4034") but the team
+                # abbreviation for defenses ("DEN"). The board stores player ids in
+                # float-string form ("4034.0") and defenses as the abbreviation, so
+                # try both rather than letting float() raise on a defense.
+                candidate_ids = [str(player_id)]
+                try:
+                    candidate_ids.insert(0, str(float(player_id)))
+                except (TypeError, ValueError):
+                    pass
+
+                player_info = original_big_board.loc[original_big_board['sleeper_id'].isin(candidate_ids)]
                 if player_info.empty:
                     logging.warning(f"Player with sleeper_id {player_id} not found in big board.")
                     continue
