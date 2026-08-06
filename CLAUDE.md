@@ -68,7 +68,16 @@ Database schema is in `schema.sql` (single `players` table). `data/` is gitignor
 
 ### The two-track endpoint surface
 
-`main.py` exposes parallel `/draft/simulation/*` and `/draft/helper/*` route families. The `*_helper` methods on `DraftManagerService` are **thin passthroughs to the simulation methods** — identical behavior, except `process_auto_pick_helper`, which is the only genuinely distinct one. Mode is actually determined by whether `draft_id` is set in the session, not by which route was called. The frontend calls `/draft/helper/start` for live drafts and `/draft/simulation/start` for simulations, then both land on the same `/draft/simulation/[session_id]` page which polls the *simulation* routes.
+`main.py` exposes parallel `/draft/simulation/*` and `/draft/helper/*` route families. The `*_helper` methods on `DraftManagerService` are **thin passthroughs to the simulation methods** — identical behavior, except `process_auto_pick_helper`, which is the only genuinely distinct one. Mode is actually determined by whether `draft_id` is set in the session, not by which route was called.
+
+The frontend mirrors this split, and each mode stays on its own routes end to end:
+
+| | Entry page | Start endpoint | Draft room | Polls |
+|---|---|---|---|---|
+| Simulation | `/draft` | `/draft/simulation/start` | `/draft/simulation/[session_id]` | nothing; you drive it with "Simulate Next Pick" |
+| Live | `/draft/helper` | `/draft/helper/start` | `/draft/helper/[session_id]` | `/draft/helper/{id}/poll-live` every 8s |
+
+The live room must not offer a CPU-pick button — `process_cpu_pick` returns an error for any session with a `draft_id`.
 
 ### Simulation vs. live mode
 
@@ -92,7 +101,10 @@ The same snake-order calculation is reimplemented in four places (`draft_manager
 
 Formats are **columns**, not rows: `std_adp`/`half_ppr_adp`/`ppr_adp` and `std_proj_pts`/`half_ppr_proj_pts`/`ppr_proj_pts`. `calculate_vorp` hard-rejects anything outside `['STD', 'PPR', 'HalfPPR']`, and `config.DEFAULT_ROSTER` is a module-level constant rather than per-league config. Supporting superflex, TE premium, 2QB, IDP, or custom scoring requires changing the schema, not just adding a branch.
 
-Note the format string is normalized inconsistently — `format.lower().replace('halfppr', 'half_ppr')` appears in both `calculate_vona` and `create_vbd_big_board` to bridge `HalfPPR` → `half_ppr`.
+**Never derive a format string or column name inline.** `'HalfPPR'.lower()` is `'halfppr'`, but every column uses `half_ppr` — that one-character gap made half-PPR raise a `KeyError` on every draft, because `create_vbd_big_board` bridged it and `calculate_vorp` didn't. Both now go through `backend/utils.py`:
+
+- `normalize_scoring_format(x)` → canonical `'STD' | 'PPR' | 'HalfPPR'`, accepting Sleeper's `half_ppr`, the setup form's `HALF_PPR`, and anything else that strips to the same letters. Do **not** `.upper()` the result; `HalfPPR` is mixed-case by design.
+- `points_column(x)` → the big board's projection column, e.g. `fantasy_points_half_ppr`.
 
 ### CPU draft behavior
 
