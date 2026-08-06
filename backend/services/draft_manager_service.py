@@ -5,7 +5,7 @@ import logging
 
 from backend.services.draft import Draft, Team
 from backend import config
-from backend.services.vbd_service import create_vbd_big_board, calculate_vona
+from backend.services.vbd_service import create_vbd_big_board, calculate_vona_board
 from backend.services.draft_service import get_user_picks
 from backend.services.simulation_service import simulate_cpu_pick, simulate_user_auto_pick
 from backend.services import sleeper_service, data_service
@@ -81,28 +81,37 @@ class DraftManagerService:
         logging.debug(f"VONA Calc Debug: current_user_pick_index={current_user_pick_index}, next_user_pick_num={next_user_pick_num if next_user_pick_num is not None else 'N/A'}")
         logging.info(f"Calculating VONA for {len(available_players)} players, simulating {picks_to_simulate} picks.")
 
-        # Limit VONA calculation to top 50 players by ADP for performance
-        players_for_vona = available_players.sort_values(by='ADP').head(50)
+        # One shared set of simulations scores the entire board, so there is no
+        # longer any reason to cap this at the top 50 by ADP.
+        vona_results = calculate_vona_board(
+            available_players,
+            draft_obj,
+            teams_list,
+            picks_to_simulate,
+            current_pick_num,
+            original_big_board,
+        )
 
-        for index, player_row in players_for_vona.iterrows():
-            # Create a deep copy of the draft state for a clean simulation
-            draft_sim = Draft(draft_obj.players.copy(), draft_obj.format, draft_obj.teams, draft_obj.rounds, draft_obj.roster, draft_obj.order)
-            draft_sim.drafted_players = draft_obj.drafted_players.copy()
-            teams_list_sim = [Team(roster=t.roster.copy()) for t in teams_list]
-            
-            vona = calculate_vona(
-                player_row, 
-                draft_sim, 
-                teams_list_sim, 
-                picks_to_simulate, 
-                draft_obj.teams, 
-                current_pick_num, 
-                draft_obj.order, 
-                original_big_board
-            )
-            vona_results[player_row['display_name']] = vona
-        
         session_state["vona_data"] = vona_results
+        session_state["vona_computed_for"] = cls._vona_state_key(session_state)
+
+    @staticmethod
+    def _vona_state_key(session_state: Dict[str, Any]) -> tuple:
+        """Identifies the board state VONA was computed against."""
+        return (session_state["current_pick_num"], len(session_state["draft_obj"].drafted_players))
+
+    @classmethod
+    def _ensure_vona(cls, session_state: Dict[str, Any]):
+        """
+        Recomputes VONA only when the board has actually moved.
+
+        get_current_draft_state recalculates on every request while it is the
+        user's turn, so changing a filter or letting the live room poll used to
+        pay the full simulation cost again for an unchanged board.
+        """
+        if session_state.get("vona_computed_for") == cls._vona_state_key(session_state):
+            return
+        cls._calculate_and_store_vona(session_state)
 
     @classmethod
     def initialize_draft(
@@ -237,9 +246,10 @@ class DraftManagerService:
             else:
                 on_clock_team_info = {"type": "cpu", "team_index": team_index}
 
-        # Recalculate VONA if it's the user's turn
+        # Recalculate VONA if it's the user's turn, but only if the board moved --
+        # this endpoint is hit on every filter change and every live-draft poll.
         if is_user_turn:
-            cls._calculate_and_store_vona(session_state)
+            cls._ensure_vona(session_state)
 
         available_players = draft_obj.get_available_players().copy()
 
@@ -250,6 +260,13 @@ class DraftManagerService:
             else:
                 available_players = available_players[available_players['pos'] == position_filter.upper()]
 
+        # Attach VONA *before* sorting. Sorting first meant the VONA column did not
+        # exist yet, so "Sort By: VONA" silently fell through to the warning below
+        # and returned the board in its existing order.
+        available_players['VONA'] = (
+            available_players['display_name'].map(session_state["vona_data"]).fillna(0.0)
+        )
+
         # Apply sorting
         if sort_by:
             ascending = True
@@ -259,19 +276,11 @@ class DraftManagerService:
                 ascending = True # Lower ADP is better
             elif sort_by.upper() == 'VONA':
                 ascending = False # Higher VONA is better
-            
+
             if sort_by.upper() in available_players.columns:
                 available_players = available_players.sort_values(by=sort_by.upper(), ascending=ascending)
             else:
                 logging.warning(f"Sort column '{sort_by}' not found in available players. Skipping sort.")
-
-        # Add VONA data to available players for display
-        if 'VONA' not in available_players.columns:
-            available_players['VONA'] = 0.0 # Initialize VONA column if it doesn't exist
-        
-        # Merge VONA data from session_state into available_players
-        for player_name, vona_value in session_state["vona_data"].items():
-            available_players.loc[available_players['display_name'] == player_name, 'VONA'] = vona_value
 
         # Limit for display after filtering and sorting
         available_players_display = _json_safe_records(available_players.head(50))

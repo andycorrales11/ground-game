@@ -76,19 +76,34 @@ def calculate_vorp(
     return df
 
 
-def calculate_vona(player_to_eval: pd.Series, draft_sim: Draft, teams_list_sim: list[Team], picks_to_simulate: int, teams: int, current_pick: int, draft_order: str, full_player_df: pd.DataFrame) -> float:
-    """
-    Calculates a more accurate VONA by simulating the draft picks until the user's next turn.
-    If the calculated VONA is NaN or negative, it returns 0.
-    """
-    # Get the points and position of the player being evaluated
-    points_col = utils.points_column(draft_sim.format)
-    player_points = player_to_eval[points_col]
-    player_position = player_to_eval['pos']
-    logging.debug(f"VONA Calc: Evaluating {player_to_eval['display_name']} ({player_position}) with {player_points} points.")
-    logging.debug(f"VONA Calc: Picks to simulate: {picks_to_simulate}")
+# How many forward simulations to average when estimating what survives to the
+# user's next turn. CPU picks are randomized, so a single run is noisy; each extra
+# run costs one more pass of picks_to_simulate CPU picks.
+VONA_SIMULATION_RUNS = 5
 
-    # Simulate the picks
+
+def simulate_to_next_turn(
+    draft_obj: Draft,
+    teams_list: list[Team],
+    picks_to_simulate: int,
+    current_pick: int,
+    full_player_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Plays out the CPU picks between now and the user's next turn.
+
+    Returns the pool that survives. The caller's Draft and Teams are left untouched.
+    """
+    draft_sim = Draft(
+        draft_obj.players.copy(), draft_obj.format, draft_obj.teams,
+        draft_obj.rounds, draft_obj.roster, draft_obj.order,
+    )
+    draft_sim.drafted_players = draft_obj.drafted_players.copy()
+    teams_sim = [Team(roster=t.roster.copy()) for t in teams_list]
+
+    teams = draft_obj.teams
+    draft_order = draft_obj.order
+
     for i in range(picks_to_simulate):
         pick_num = current_pick + i + 1
         current_round = (pick_num - 1) // teams + 1
@@ -98,49 +113,87 @@ def calculate_vona(player_to_eval: pd.Series, draft_sim: Draft, teams_list_sim: 
         else:
             team_index = (pick_num - 1) % teams
 
-        cpu_team = teams_list_sim[team_index]
-
-        # Simulate the pick for the CPU team
         available_for_cpu = draft_sim.get_available_players()
         if available_for_cpu.empty:
-            logging.debug("VONA Calc: No more players available during simulation.")
-            break # No more players to draft
+            break
 
-        # Ensure VORP is calculated for the simulation frame
-        for position in ['QB', 'RB', 'WR', 'TE']:# Only calculate VORP for skill positions
-            available_for_cpu = calculate_vorp(available_for_cpu, position, teams=draft_sim.teams, format=draft_sim.format)
+        for position in ['QB', 'RB', 'WR', 'TE']:  # Only skill positions carry VORP
+            available_for_cpu = calculate_vorp(
+                available_for_cpu, position, teams=teams, format=draft_sim.format
+            )
 
+        cpu_team = teams_sim[team_index]
         cpu_pick_name = simulate_cpu_pick(available_for_cpu, cpu_team, full_player_df)
         pos = draft_sim.draft_player(utils.normalize_name(cpu_pick_name))
         if pos:
             cpu_team.add_player(cpu_pick_name, pos)
-            logging.debug(f"VONA Calc: Sim pick {pick_num}: CPU (Team {team_index + 1}) drafted {cpu_pick_name} ({pos})")
-        else:
-            logging.debug(f"VONA Calc: Sim pick {pick_num}: CPU (Team {team_index + 1}) failed to draft a player.")
+
+    return draft_sim.get_available_players()
 
 
-    # After simulation, find the best available player at the same position
-    remaining_players = draft_sim.get_available_players()
-    best_remaining_at_pos = remaining_players[remaining_players['pos'] == player_position]
-    logging.debug(f"VONA Calc: Best remaining at {player_position}:\n{best_remaining_at_pos.head()}")
+def calculate_vona_board(
+    available_players: pd.DataFrame,
+    draft_obj: Draft,
+    teams_list: list[Team],
+    picks_to_simulate: int,
+    current_pick: int,
+    full_player_df: pd.DataFrame,
+    runs: int = VONA_SIMULATION_RUNS,
+) -> dict[str, float]:
+    """
+    VONA for every available player, from one shared set of forward simulations.
 
-    if best_remaining_at_pos.empty:
-        logging.debug(f"VONA Calc: No players left at {player_position} after simulation. VONA set to 0.0.")
-        # If no players are left at the position, the value is 0 per new requirement
-        return 0.0
+    VONA asks: how much do I lose by waiting? That is the candidate's projection
+    minus the best projection still available at their position on my next turn --
+    and the forward simulation that answers the second half never looks at the
+    candidate at all.
 
-    next_best_points = best_remaining_at_pos.sort_values(by=points_col, ascending=False).iloc[0][points_col]
-    logging.debug(f"VONA Calc: Next best {player_position} points: {next_best_points}")
+    This used to be run once per candidate (50 near-identical simulations, ~17s),
+    which was both slow and subtly wrong: every candidate was scored against a
+    different random future, so the VONA column was not internally comparable.
+    Simulating a few times up front and averaging the best survivor per position
+    scores the whole board against the same expected outcome.
 
-    vona_value = player_points - next_best_points
-    logging.debug(f"VONA Calc: Raw VONA value: {vona_value}")
+    Returns {display_name: vona}, clamped at 0 -- a player who is still there next
+    turn costs you nothing to wait on.
+    """
+    points_col = utils.points_column(draft_obj.format)
 
-    # If VONA is NaN or negative, set to 0
-    if pd.isna(vona_value) or vona_value < 0:
-        logging.debug(f"VONA Calc: VONA is NaN or negative ({vona_value}). Setting to 0.0.")
-        return 0.0
-    else:
-        return vona_value
+    if available_players.empty:
+        return {}
+
+    # No picks in between means nothing comes off the board, so waiting is free.
+    if picks_to_simulate <= 0:
+        return {name: 0.0 for name in available_players['display_name']}
+
+    best_by_pos: dict[str, list[float]] = {}
+    for _ in range(max(1, runs)):
+        survivors = simulate_to_next_turn(
+            draft_obj, teams_list, picks_to_simulate, current_pick, full_player_df
+        )
+        if survivors.empty:
+            continue
+        for pos, best in survivors.groupby('pos')[points_col].max().items():
+            if pd.notna(best):
+                best_by_pos.setdefault(pos, []).append(best)
+
+    expected_best = {pos: sum(vals) / len(vals) for pos, vals in best_by_pos.items()}
+
+    vona_results: dict[str, float] = {}
+    for name, pos, points in zip(
+        available_players['display_name'],
+        available_players['pos'],
+        available_players[points_col],
+    ):
+        # A position wiped out entirely, or a player with no projection (K/DEF),
+        # scores 0 rather than a meaningless number.
+        if pos not in expected_best or pd.isna(points):
+            vona_results[name] = 0.0
+            continue
+        vona = points - expected_best[pos]
+        vona_results[name] = float(vona) if vona > 0 else 0.0
+
+    return vona_results
 
 
 def create_vbd_big_board(season: int = 2024, format: str = config.DEFAULT_DRAFT_FORMAT, teams: int = config.DEFAULT_TEAMS) -> pd.DataFrame:
