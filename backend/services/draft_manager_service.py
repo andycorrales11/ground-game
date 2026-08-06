@@ -430,3 +430,91 @@ class DraftManagerService:
             }
         else:
             return {"message": "No new picks found.", "new_picks": []}
+
+    @classmethod
+    def calculate_vona_for_display(cls, session_id: str, player_names: List[str]) -> Dict[str, Any]:
+        session_state = cls._active_draft_sessions.get(session_id)
+        if not session_state:
+            return {"error": "Draft session not found."}
+
+        vona_data = session_state.get("vona_data", {})
+        results = {name: vona_data.get(name, 0) for name in player_names}
+        return results
+
+    @classmethod
+    def initialize_draft_helper(
+        cls,
+        pick_slot: int,
+        draft_id: str | None = None,
+        non_interactive: bool = False,
+        teams: int | None = None,
+        rounds: int | None = None,
+        format: str | None = None,
+        order: str | None = None
+    ) -> Dict[str, Any]:
+        return cls.initialize_draft(
+            pick_slot,
+            draft_id,
+            non_interactive,
+            teams,
+            rounds,
+            format,
+            order
+        )
+
+    @classmethod
+    def get_current_draft_helper_state(cls, session_id: str, position_filter: str | None = None, sort_by: str | None = None) -> Dict[str, Any]:
+        return cls.get_current_draft_state(session_id, position_filter, sort_by)
+
+    @classmethod
+    def process_user_pick_helper(cls, session_id: str, player_name: str) -> Dict[str, Any]:
+        return cls.process_user_pick(session_id, player_name)
+
+    @classmethod
+    def process_cpu_pick_helper(cls, session_id: str) -> Dict[str, Any]:
+        return cls.process_cpu_pick(session_id)
+
+    @classmethod
+    def process_auto_pick_helper(cls, session_id: str) -> Dict[str, Any]:
+        session_state = cls._active_draft_sessions.get(session_id)
+        if not session_state:
+            return {"error": "Draft session not found."}
+
+        draft_obj: Draft = session_state["draft_obj"]
+        teams_list: List[Team] = session_state["teams_list"]
+        current_pick_num = session_state["current_pick_num"]
+        original_big_board = session_state["original_big_board"]
+
+        current_round = (current_pick_num) // draft_obj.teams + 1
+        if draft_obj.order == 'snake' and current_round % 2 == 0:
+            team_index = draft_obj.teams - ((current_pick_num) % draft_obj.teams) - 1
+        else:
+            team_index = (current_pick_num) % draft_obj.teams
+
+        current_team = teams_list[team_index]
+        available_players = draft_obj.get_available_players()
+
+        if available_players.empty:
+            return {"message": "No more players available for auto pick.", "status": "completed"}
+
+        player_name = simulate_user_auto_pick(available_players, current_team, original_big_board)
+        pos = draft_obj.draft_player(normalize_name(player_name))
+
+        if pos:
+            current_team.add_player(normalize_name(player_name), pos)
+            session_state["current_pick_num"] += 1
+            logging.info(f"Auto-drafting: {player_name} ({pos})")
+            cls._calculate_and_store_vona(session_state)
+            return {
+                "message": f"Successfully auto-drafted {player_name} ({pos}).",
+                "player_name": player_name,
+                "position": pos,
+                "new_pick_num": session_state["current_pick_num"]
+            }
+        else:
+            logging.warning(f"Could not auto-draft '{player_name}'. Player not found or already drafted.")
+            return {"error": f"Could not auto-draft '{player_name}'. Player not found or already drafted."}
+
+    @classmethod
+    def poll_live_draft_updates_helper(cls, session_id: str) -> Dict[str, Any]:
+        return cls.poll_live_draft_updates(session_id)

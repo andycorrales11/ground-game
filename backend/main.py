@@ -91,3 +91,52 @@ async def calculate_vona_endpoint(session_id: str, request: VonaCalculationReque
         raise HTTPException(status_code=400, detail=result["error"])
     return result
 
+@app.post("/draft/helper/start")
+async def start_draft_helper(settings: DraftSettings):
+    result = DraftManagerService.initialize_draft_helper(
+        pick_slot=settings.pick_slot,
+        draft_id=settings.draft_id,
+        non_interactive=settings.non_interactive,
+        teams=settings.teams,
+        rounds=settings.rounds,
+        format=settings.format,
+        order=settings.order
+    )
+    if "error" in result:
+        return JSONResponse(content=result, status_code=400)
+    return result
+
+@app.get("/draft/helper/{session_id}/state")
+async def get_draft_helper_state(session_id: str, position_filter: str | None = None, sort_by: str | None = None):
+    result = DraftManagerService.get_current_draft_helper_state(session_id, position_filter, sort_by)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+@app.post("/draft/helper/{session_id}/pick")
+async def make_draft_helper_pick(session_id: str, player_pick: PlayerPick):
+    result = DraftManagerService.process_user_pick_helper(session_id, player_pick.player_name)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+@app.post("/draft/helper/{session_id}/simulate-pick")
+async def simulate_draft_helper_pick(session_id: str):
+    result = DraftManagerService.process_cpu_pick_helper(session_id)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+@app.post("/draft/helper/{session_id}/auto-pick")
+async def auto_draft_helper_pick(session_id: str):
+    result = DraftManagerService.process_auto_pick_helper(session_id)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+@app.get("/draft/helper/{session_id}/poll-live")
+async def poll_live_draft_helper(session_id: str):
+    result = DraftManagerService.poll_live_draft_updates_helper(session_id)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
