@@ -4,12 +4,24 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import axios from 'axios';
 
+interface Player {
+  normalized_name: string;
+  display_name: string;
+  pos: string;
+  team: string | null;
+  ADP: number | null;
+  VORP: number | null;
+  VONA: number | null;
+  // The big board also carries format-specific columns (e.g. fantasy_points_ppr).
+  [key: string]: string | number | null | undefined;
+}
+
 interface DraftState {
   session_id: string;
   current_pick_num: number;
   is_user_turn: boolean;
   on_clock_team: { type: string; roster_id?: string; team_index?: number };
-  available_players: any[];
+  available_players: Player[];
   drafted_players_count: number;
   total_picks: number;
   status: string;
@@ -142,7 +154,7 @@ export default function DraftPage() {
       ) : (
         <div style={{ marginBottom: '20px', padding: '15px', border: '1px solid #ddd', borderRadius: '8px', backgroundColor: '#f9f9f9' }}>
           {is_user_turn ? (
-            <h2 style={{ color: '#0070f3', textAlign: 'center' }}>It's YOUR Turn!</h2>
+            <h2 style={{ color: '#0070f3', textAlign: 'center' }}>It&apos;s YOUR Turn!</h2>
           ) : (
             <h2 style={{ color: '#555', textAlign: 'center' }}>
               {on_clock_team.type === 'cpu' ? `CPU (Team ${on_clock_team.team_index !== undefined ? on_clock_team.team_index + 1 : on_clock_team.roster_id})` : `Team ${on_clock_team.roster_id}`} is on the clock.
