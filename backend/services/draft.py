@@ -1,4 +1,5 @@
 import pandas as pd
+from collections import Counter
 from typing import List, Dict, Set
 from backend import config
 
@@ -53,11 +54,39 @@ class Team:
     """
     def __init__(self, roster: List[str] = config.DEFAULT_ROSTER):
         self.roster: Dict[str, str | None] = {slot: None for slot in roster}
-    
+
+        # Positions are tallied as players arrive rather than looked up afterwards
+        # against the big board. Callers disagree about which name form goes into
+        # the roster -- normalized in draft_manager_service, display name in the
+        # VONA simulation -- so the old name-based lookup silently counted zero and
+        # the CPU's third-QB penalty never fired. `pos` is known at add time.
+        self._position_counts: Counter = Counter()
+
+    def copy(self) -> "Team":
+        """
+        A detached duplicate with the roster and tallies intact.
+
+        The VONA forward simulation used to build its teams with
+        `Team(roster=t.roster.copy())`. The constructor takes slot *names*, so
+        iterating a roster dict handed it the keys and produced an empty team --
+        every CPU team entered the simulation as though the draft had not started,
+        which made positional need and the QB penalty inert exactly when the draft
+        is far enough along for them to matter.
+        """
+        clone = Team(list(self.roster.keys()))
+        clone.roster = dict(self.roster)
+        clone._position_counts = self._position_counts.copy()
+        return clone
+
     def add_player(self, player: str, pos: str):
         """
         Adds a player to the first available roster slot for their position.
+
+        The tally is incremented even when no slot is free: a team that has drafted
+        three quarterbacks has three regardless of where they sit.
         """
+        self._position_counts[pos] += 1
+
         # Find a position-specific slot first
         for slot in self.roster:
             if slot.startswith(pos) and self.roster[slot] is None:
@@ -112,21 +141,8 @@ class Team:
                 needs.append(pos)
         return needs
 
-    def count_players_at_position(self, pos: str, player_df: pd.DataFrame) -> int:
+    def count_players_at_position(self, pos: str) -> int:
         """
         Counts the number of players of a specific position on the team.
         """
-        count = 0
-        # Get the display names of players on the roster
-        rostered_players = [name for name in self.roster.values() if name is not None]
-        if not rostered_players:
-            return 0
-        
-        # Filter the main player DataFrame to get the positions of rostered players
-        roster_details = player_df[player_df['display_name'].isin(rostered_players)]
-        
-        # Count how many have the specified position
-        if not roster_details.empty:
-            count = roster_details[roster_details['pos'] == pos].shape[0]
-            
-        return count
+        return self._position_counts[pos]

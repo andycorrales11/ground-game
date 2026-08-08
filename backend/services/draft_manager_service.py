@@ -34,7 +34,6 @@ class DraftManagerService:
         draft_obj: Draft = session_state["draft_obj"]
         teams_list: List[Team] = session_state["teams_list"]
         current_pick_num = session_state["current_pick_num"]
-        original_big_board = session_state["original_big_board"]
         user_picks_simulation = session_state["user_picks_simulation"]
         draft_id = session_state["draft_id"]
         user_pick_slot = session_state["user_pick_slot"]
@@ -89,7 +88,6 @@ class DraftManagerService:
             teams_list,
             picks_to_simulate,
             current_pick_num,
-            original_big_board,
         )
 
         session_state["vona_data"] = vona_results
@@ -357,7 +355,6 @@ class DraftManagerService:
         draft_obj: Draft = session_state["draft_obj"]
         teams_list: List[Team] = session_state["teams_list"]
         current_pick_num = session_state["current_pick_num"]
-        original_big_board = session_state["original_big_board"]
         draft_id = session_state["draft_id"]
 
         if draft_id:
@@ -375,7 +372,7 @@ class DraftManagerService:
         if available_players.empty:
             return {"message": "No more players available for CPU pick.", "status": "completed"}
 
-        cpu_pick_name = simulate_cpu_pick(available_players, current_team, original_big_board)
+        cpu_pick_name = simulate_cpu_pick(available_players, current_team)
         pos = draft_obj.draft_player(normalize_name(cpu_pick_name))
 
         if pos:
@@ -514,7 +511,6 @@ class DraftManagerService:
         draft_obj: Draft = session_state["draft_obj"]
         teams_list: List[Team] = session_state["teams_list"]
         current_pick_num = session_state["current_pick_num"]
-        original_big_board = session_state["original_big_board"]
 
         current_round = (current_pick_num) // draft_obj.teams + 1
         if draft_obj.order == 'snake' and current_round % 2 == 0:
@@ -523,12 +519,20 @@ class DraftManagerService:
             team_index = (current_pick_num) % draft_obj.teams
 
         current_team = teams_list[team_index]
-        available_players = draft_obj.get_available_players()
+        available_players = draft_obj.get_available_players().copy()
 
         if available_players.empty:
             return {"message": "No more players available for auto pick.", "status": "completed"}
 
-        player_name = simulate_user_auto_pick(available_players, current_team, original_big_board)
+        # simulate_user_auto_pick ranks on VONA, which lives in the session rather
+        # than on the board -- get_current_draft_state attaches it to its own copy.
+        # Without this the endpoint raised KeyError: 'VONA' on every call.
+        cls._ensure_vona(session_state)
+        available_players['VONA'] = (
+            available_players['display_name'].map(session_state["vona_data"]).fillna(0.0)
+        )
+
+        player_name = simulate_user_auto_pick(available_players, current_team)
         pos = draft_obj.draft_player(normalize_name(player_name))
 
         if pos:

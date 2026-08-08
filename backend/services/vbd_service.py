@@ -87,7 +87,6 @@ def simulate_to_next_turn(
     teams_list: list[Team],
     picks_to_simulate: int,
     current_pick: int,
-    full_player_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """
     Plays out the CPU picks between now and the user's next turn.
@@ -99,7 +98,11 @@ def simulate_to_next_turn(
         draft_obj.rounds, draft_obj.roster, draft_obj.order,
     )
     draft_sim.drafted_players = draft_obj.drafted_players.copy()
-    teams_sim = [Team(roster=t.roster.copy()) for t in teams_list]
+    # Team.copy() carries the picks already made. Building these with
+    # Team(roster=t.roster.copy()) only copied the slot *names*, so the simulated
+    # opponents started every run with empty rosters and drafted as if it were
+    # round one.
+    teams_sim = [t.copy() for t in teams_list]
 
     teams = draft_obj.teams
     draft_order = draft_obj.order
@@ -123,8 +126,8 @@ def simulate_to_next_turn(
             )
 
         cpu_team = teams_sim[team_index]
-        cpu_pick_name = simulate_cpu_pick(available_for_cpu, cpu_team, full_player_df)
-        pos = draft_sim.draft_player(utils.normalize_name(cpu_pick_name))
+        cpu_pick_name = utils.normalize_name(simulate_cpu_pick(available_for_cpu, cpu_team))
+        pos = draft_sim.draft_player(cpu_pick_name)
         if pos:
             cpu_team.add_player(cpu_pick_name, pos)
 
@@ -137,7 +140,6 @@ def calculate_vona_board(
     teams_list: list[Team],
     picks_to_simulate: int,
     current_pick: int,
-    full_player_df: pd.DataFrame,
     runs: int = VONA_SIMULATION_RUNS,
 ) -> dict[str, float]:
     """
@@ -169,7 +171,7 @@ def calculate_vona_board(
     best_by_pos: dict[str, list[float]] = {}
     for _ in range(max(1, runs)):
         survivors = simulate_to_next_turn(
-            draft_obj, teams_list, picks_to_simulate, current_pick, full_player_df
+            draft_obj, teams_list, picks_to_simulate, current_pick
         )
         if survivors.empty:
             continue

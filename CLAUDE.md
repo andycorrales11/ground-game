@@ -99,6 +99,8 @@ The same snake-order calculation is reimplemented in four places (`draft_manager
 
   `_ensure_vona` caches the result against `(current_pick_num, len(drafted_players))`. `get_current_draft_state` is hit on every filter change and every live-draft poll, so recomputing unconditionally is what made the UI feel frozen.
 
+  **The simulated opponents must inherit the real rosters** — `simulate_to_next_turn` builds them with `Team.copy()`. It previously used `Team(roster=t.roster.copy())`, and since the constructor takes slot *names*, iterating a roster dict handed it the keys and produced an empty team. Every opponent then drafted as though it were round one, which flattens positional need to a no-op and inflated VONA at whichever position the field had already filled.
+
 `create_vbd_big_board()` loads the whole `players` table and renames the format-specific columns (`ppr_adp` → `ADP`, `ppr_proj_pts` → `fantasy_points_ppr`) into the generic names the rest of the pipeline expects.
 
 ### Scoring formats are baked into the schema
@@ -115,7 +117,9 @@ Formats are **columns**, not rows: `std_adp`/`half_ppr_adp`/`ppr_adp` and `std_p
 `backend/services/simulation_service.py` scores players on a **lower-is-better** scale:
 
 - `simulate_cpu_pick` — blends VORP rank and ADP rank 10/90, applies a ×5.0 penalty for a 3rd QB and a ×0.70 bonus for unfilled starting slots, then samples from the top 10 with a fixed probability vector (60% top choice) so drafts aren't deterministic.
-- `simulate_user_auto_pick` — VONA/VORP/ADP weighted 50/20/30, picks the single best score with no randomness.
+- `simulate_user_auto_pick` — VONA/VORP/ADP weighted 50/20/30, picks the single best score with no randomness. It reads a `VONA` column that lives in the session, not on the board, so **every caller must attach it first**; `get_current_draft_state` attaches it to its own copy, and `process_auto_pick_helper` not doing the same is what made `POST /draft/helper/{id}/auto-pick` raise `KeyError: 'VONA'` on every call.
+
+Neither takes the big board any more. They only ever used it to count a team's players by position, which `Team` now tracks itself.
 
 ### Name matching
 
@@ -126,7 +130,7 @@ Formats are **columns**, not rows: `std_adp`/`half_ppr_adp`/`ppr_adp` and `std_p
 
 **Store ids in Sleeper's own form** (`"4034"`, and the bare abbreviation for defenses). `nfl.import_ids()` returns them numerically, so a plain `str()` yields `"4034.0"` and silently fails to match the feed — `canonical_sleeper_id()` strips that. Live-draft pick matching tries both forms, so it tolerates either.
 
-**Inconsistency to watch:** `Team.add_player()` is called with *normalized* names in `draft_manager_service`, but `Team.count_players_at_position()` looks players up by `display_name`. The lookup never matches, so the CPU's QB-count penalty does not currently fire.
+**`Team` does not match on names at all.** Callers disagree about which form goes into `Team.roster` — `draft_manager_service` adds normalized names, the VONA simulation used to add display names — so `count_players_at_position` used to look rostered players up in the big board by `display_name` and always return 0, meaning the CPU's 3rd-QB penalty never fired. It now reads a tally that `add_player` maintains from the `pos` it is already given. Keep it that way: the roster's name form is not a contract.
 
 ### Data pipeline
 
@@ -163,5 +167,5 @@ These were all bugs at one point; keep them true.
 
 ## Known stale code
 
-- **`backend/services/auth_service.py` is empty.**
-- `backend/tests/vorp_test.py` filters on a `position` column, but the database and all runtime code use `pos`. (The same bug in `simulation_service_test.py` has been fixed.)
+- `ingest/ingest_all.py` and the parquet pipeline it drives have no runtime consumer, and `ingest_stats.py` 404s for any season after 2024. Migrate to `nflreadpy` or delete it.
+- `backend/services/auth_service.py` was an empty file and has been deleted. Nothing imported it.

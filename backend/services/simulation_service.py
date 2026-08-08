@@ -36,7 +36,7 @@ def calculate_draft_score(players: pd.DataFrame) -> pd.DataFrame:
         
     return players
 
-def simulate_cpu_pick(available_players: pd.DataFrame, team: Team, full_player_df: pd.DataFrame) -> str:
+def simulate_cpu_pick(available_players: pd.DataFrame, team: Team) -> str:
     """
     Simulates a CPU pick using a balanced approach of Best Player Available (BPA),
     positional need, and positional scarcity.
@@ -46,7 +46,7 @@ def simulate_cpu_pick(available_players: pd.DataFrame, team: Team, full_player_d
 
     # 2. Apply penalties and bonuses
     # QB Penalty: If team has 2 QBs, heavily penalize drafting another
-    if team.count_players_at_position('QB', full_player_df) >= 2:
+    if team.count_players_at_position('QB') >= 2:
         players.loc[players['pos'] == 'QB', 'draft_score'] *= 5.0 # Heavy penalty
 
     # Starter Bonus: Prioritize filling starting spots
@@ -84,7 +84,7 @@ def simulate_cpu_pick(available_players: pd.DataFrame, team: Team, full_player_d
 
     return np.random.choice(choices, p=probabilities)
 
-def simulate_user_auto_pick(available_players: pd.DataFrame, team: Team, full_player_df: pd.DataFrame) -> str:
+def simulate_user_auto_pick(available_players: pd.DataFrame, team: Team) -> str:
     """
     Simulates a user's auto-pick using a VONA-enhanced hybrid score.
     """
@@ -104,7 +104,7 @@ def simulate_user_auto_pick(available_players: pd.DataFrame, team: Team, full_pl
 
     # 3. Apply penalties and bonuses
     # QB Penalty
-    if team.count_players_at_position('QB', full_player_df) >= 2:
+    if team.count_players_at_position('QB') >= 2:
         players.loc[players['pos'] == 'QB', 'auto_pick_score'] *= 5.0
 
     # Starter Bonus
