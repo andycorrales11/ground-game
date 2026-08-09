@@ -92,7 +92,9 @@ The same snake-order calculation is reimplemented in four places (`draft_manager
 
 `backend/services/vbd_service.py`:
 
-- **VORP** — points above the replacement-level player at that position. Replacement level is `(starters × teams) + (flex × teams × 0.5)` for RB/WR (hardcoded 50/50 flex split), `starters × teams` otherwise. Result is scaled by `config.POSITION_ADJUSTMENT` (QB is dampened to 0.8). Only computed for QB/RB/WR/TE — K and DEF always have VORP 0.
+- **VORP** — points above the replacement-level player at that position. Replacement level is `(starters × teams) + (flex × teams × 0.5)` for RB/WR (hardcoded 50/50 flex split), `starters × teams` otherwise. Result is scaled by `config.POSITION_ADJUSTMENT` (QB is dampened to 0.8; anything absent is 1.0). Computed for every position in `config.VORP_POSITIONS`, which now includes K and DEF — they were excluded only because the Athletic CSVs never projected them.
+
+  **VORP 0 means replacement level, never "no data."** A player with no projection keeps `NaN`, which sorts last everywhere (`sort_values` defaults to `na_position='last'`, the CPU ranks with `na_option='bottom'`, and `_json_safe_records` emits `null`). Filling it with 0.0 instead put 163 players — every K and DEF plus ~78 unprojected skill players — above everyone below replacement level, so sorting the board by VORP after round 8 returned almost nothing but kickers.
 - **VONA** — value over next available. Runs a *real forward simulation* of every CPU pick until the user's next turn, then compares the candidate against the best remaining player at the same position.
 
   **The forward simulation does not depend on the candidate** — the candidate only enters in the final subtraction. So `calculate_vona_board` runs the simulation once (`VONA_SIMULATION_RUNS = 5`, averaged to damp the CPU randomness) and scores the whole board against that one expected outcome. Do not reintroduce a per-candidate simulation: it is ~11× slower *and* makes the column internally incomparable, because each player would be scored against a different random future.
@@ -125,7 +127,10 @@ Neither takes the big board any more. They only ever used it to count a team's p
 
 `sleeper_id` is the primary key, and **projections now join on it** rather than on a name — that path has no name matching at all. What still goes through names:
 
-- Resolving a FantasyPros ADP row to a Sleeper id, via `nfl.import_ids()` plus the manual `NAME_MAP` for players nflverse and FantasyPros spell differently (e.g. `"Deebo Samuel Sr."`).
+- Resolving a FantasyPros ADP row to a Sleeper id, via `nfl.import_ids()`. `_build_name_index` / `_resolve_sleeper_id` try four keys, most specific first: `(exact name, pos)`, `exact name`, `(normalized name, pos)`, `normalized name`. A key covering two different ids is discarded rather than guessed at.
+  - **Position is not optional.** nflverse lists two Lamar Jacksons (Ravens QB, Panthers CB) and two Justin Jeffersons (Vikings WR, 2026 Browns LB). Matching on name alone is a coin flip that silently strips the ADP off a first-round player.
+  - **Normalization is what bridges suffixes**, which FantasyPros writes and nflverse mostly does not — `"James Cook III"`, `"Patrick Mahomes II"`, `"Travis Etienne Jr."`. Exact-only matching dropped 86 of 598 ADP rows; the player then reappeared from the projection feed with no ADP at all. Do **not** add suffix variants to `NAME_MAP` — that is what the normalized tier is for. `NAME_MAP` is only for genuinely different spellings (`"Kenny Gainwell"` → `"Kenneth Gainwell"`).
+  - `_fill_ids_from_projections` gets a second pass at whatever is left, using Sleeper's own projection feed as the name source. It covers rookies nflverse has not picked up yet, kickers especially.
 - `create_vbd_big_board` joining on `normalized_name` (`backend/utils.py` — strips suffixes, lowercases, underscores).
 
 **Store ids in Sleeper's own form** (`"4034"`, and the bare abbreviation for defenses). `nfl.import_ids()` returns them numerically, so a plain `str()` yields `"4034.0"` and silently fails to match the feed — `canonical_sleeper_id()` strips that. Live-draft pick matching tries both forms, so it tolerates either.
@@ -163,7 +168,8 @@ These were all bugs at one point; keep them true.
 - **NaN must never reach the database.** `prepare_data` ends with `.astype(object).where(pd.notna(...), None)` so missing values land as SQL `NULL`. Written as raw pandas NaN through `COPY`, they become the literal string `'nan'` in varchar columns and IEEE `NaN` in `double precision` columns — and `IS NULL` matches neither, so the data looks clean while being garbage.
 - **`pos` and `team` are coalesced across all three ADP files**, then fall back to the position/team encoded in the projection filenames. Reading them from the STD file alone leaves ~20% of the board positionless.
 - **Defenses need special handling.** FantasyPros lists them by full team name with `Team` set to the literal `"DST"`, and `nfl.import_ids()` doesn't cover them. `DEFENSE_TEAM_ABBR` maps the name to the abbreviation, which becomes both `team` and `sleeper_id` (Sleeper keys defenses by abbreviation). Position is normalized `DST` → `DEF` to match `config.DEFAULT_ROSTER`.
-- **API responses must be NaN-free.** `_json_safe_records` in `draft_manager_service` converts NaN to `None` before serialization; `json.dumps` emits a bare `NaN` literal that `JSON.parse` rejects. K and DEF rows have no projections, so filtering to those positions is what triggers it.
+- **API responses must be NaN-free.** `_json_safe_records` in `draft_manager_service` converts NaN to `None` before serialization; `json.dumps` emits a bare `NaN` literal that `JSON.parse` rejects. Unprojected players carry NaN ADP *and* NaN VORP, so this is load-bearing on every response.
+- **Never `drop_duplicates` on a key column that still holds NaN.** pandas treats every NaN as equal to every other, so it collapses all the unresolved rows into one — which is how a report meant to name the dropped players ended up naming a single arbitrary one. Split the frame, dedupe the identified rows, concat the rest back.
 
 ## Known stale code
 

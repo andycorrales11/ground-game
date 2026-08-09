@@ -36,9 +36,11 @@ def calculate_vorp(
     if points_column not in df.columns:
         raise KeyError(f"Points column '{points_column}' not found in DataFrame.")
 
-    # Ensure VORP column exists
+    # Ensure VORP column exists. It starts as NaN, not 0.0: 0 means "exactly
+    # replacement level", which is a real and fairly good player, so using it for
+    # "no value computed" floats every unknown above everyone below replacement.
     if 'VORP' not in df.columns:
-        df['VORP'] = 0.0
+        df['VORP'] = float('nan')
 
     # Determine replacement level based on roster settings
     num_starters = roster_config.count(position)
@@ -63,12 +65,12 @@ def calculate_vorp(
     else:
         replacement_value = 0 # No replacement player found, so VORP is just their score
 
-    # Calculate VORP for the position, applying the positional adjustment.
-    # Unprojected players fall back to 0 rather than NaN, which is not valid JSON.
+    # Calculate VORP for the position, applying the positional adjustment. A player
+    # with no projection keeps NaN: they are unranked, not replacement level.
+    # _json_safe_records turns it into null at the edge, every sort here uses the
+    # default na_position='last', and the CPU ranks with na_option='bottom'.
     adjustment_factor = config.POSITION_ADJUSTMENT.get(position, 1.0)
-    df_pos['VORP_pos'] = (
-        (df_pos[points_column] - replacement_value) * adjustment_factor
-    ).fillna(0.0)
+    df_pos['VORP_pos'] = (df_pos[points_column] - replacement_value) * adjustment_factor
 
     # Update the main DataFrame's VORP column for the specific position
     df.loc[df_pos.index, 'VORP'] = df_pos['VORP_pos']
@@ -120,7 +122,11 @@ def simulate_to_next_turn(
         if available_for_cpu.empty:
             break
 
-        for position in ['QB', 'RB', 'WR', 'TE']:  # Only skill positions carry VORP
+        # Only the skill positions are recomputed against the shrinking pool. K and
+        # DEF keep the VORP create_vbd_big_board gave them, which barely moves as
+        # the draft runs, and recomputing them here would cost 50% more passes
+        # through calculate_vorp in the hottest loop in the app.
+        for position in ('QB', 'RB', 'WR', 'TE'):
             available_for_cpu = calculate_vorp(
                 available_for_cpu, position, teams=teams, format=draft_sim.format
             )
@@ -236,10 +242,9 @@ def create_vbd_big_board(season: int = 2024, format: str = config.DEFAULT_DRAFT_
         base_df[fantasy_points_col] = 0.0
 
     # 4. Calculate VORP for all positions
-    all_positions = base_df['pos'].unique()
     final_df = base_df.copy()
-    for position in all_positions:
-        if position in ['QB', 'RB', 'WR', 'TE']: # Only calculate VORP for skill positions
+    for position in base_df['pos'].unique():
+        if position in config.VORP_POSITIONS:
             final_df = calculate_vorp(final_df, position, teams, format)
 
     # Sort the final big board by VORP

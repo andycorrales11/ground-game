@@ -72,12 +72,17 @@ DEFENSE_TEAM_ABBR = {
     "Tennessee Titans": "TEN", "Washington Commanders": "WAS",
 }
 
-# nfl_data_py disagrees with FantasyPros on a handful of names.
+# nfl_data_py disagrees with FantasyPros on a handful of names. Suffix-only
+# differences ("Travis Etienne Jr.") do NOT belong here -- the normalized fallback
+# in _resolve_sleeper_id handles those. This is for genuinely different spellings.
 NAME_MAP = {
     "Deebo Samuel Sr.": "Deebo Samuel",
     "Brian Robinson Jr.": "Brian Robinson",
     "Anthony Richardson Sr.": "Anthony Richardson",
     "Aaron Jones Sr.": "Aaron Jones",
+    "Kenny Gainwell": "Kenneth Gainwell",
+    "Chig Okonkwo": "Chigoziem Okonkwo",
+    "Hollywood Brown": "Marquise Brown",
 }
 
 
@@ -100,6 +105,66 @@ def get_sleeper_ids():
     """Gets Sleeper IDs for a list of player names using nfl_data_py."""
     player_ids_df = nfl.import_ids()
     return player_ids_df
+
+
+def _build_name_index(names, positions, raw_ids) -> list[dict]:
+    """
+    Builds the lookups used to resolve a FantasyPros name to a Sleeper id, most
+    specific first: (exact name, pos), exact name, (normalized name, pos),
+    normalized name.
+
+    Both halves matter.
+
+    Position is what separates players who genuinely share a name. nflverse lists
+    two Lamar Jacksons (the Ravens QB and a Panthers CB) and two Justin Jeffersons
+    (the Vikings WR and a 2026 Browns LB). Picking by name alone is a coin flip,
+    and it lands on the wrong one often enough to strip the ADP off a first-round
+    player.
+
+    Normalization is what bridges suffixes, which FantasyPros writes and nflverse
+    mostly does not -- "James Cook III" against "James Cook", "Patrick Mahomes II"
+    against "Patrick Mahomes".
+
+    A key that still covers two different ids is dropped rather than guessed at,
+    so an ambiguous name falls through to the next lookup or goes unresolved and
+    gets reported.
+    """
+    buckets: list[dict] = [{}, {}, {}, {}]
+
+    for name, pos, raw in zip(names, positions, raw_ids):
+        sid = canonical_sleeper_id(raw)
+        if not sid or not isinstance(name, str):
+            continue
+        norm = normalize_name(name)
+        keys = [None, name, None, norm]
+        if isinstance(pos, str) and pos:
+            keys[0] = (name, pos.upper())
+            keys[2] = (norm, pos.upper())
+        for bucket, key in zip(buckets, keys):
+            if key is not None:
+                bucket.setdefault(key, set()).add(sid)
+
+    return [
+        {k: next(iter(v)) for k, v in bucket.items() if len(v) == 1}
+        for bucket in buckets
+    ]
+
+
+def _resolve_sleeper_id(name, pos, index: list[dict]) -> str | None:
+    """Resolves one FantasyPros player name to a Sleeper id, most specific first."""
+    mapped = NAME_MAP.get(name, name)
+    if not isinstance(mapped, str):
+        return None
+
+    norm = normalize_name(mapped)
+    upper_pos = pos.upper() if isinstance(pos, str) and pos else None
+    for bucket, key in zip(index, [(mapped, upper_pos), mapped, (norm, upper_pos), norm]):
+        if isinstance(key, tuple) and key[1] is None:
+            continue
+        sid = bucket.get(key)
+        if sid:
+            return sid
+    return None
 
 
 def _resolve_adp_file(season: int, label: str, adp_dir: Path) -> Path:
@@ -247,6 +312,8 @@ def _merge_sleeper_projections(board: pd.DataFrame, season: int) -> pd.DataFrame
     projections = sleeper_projections.fetch_projections(season)
     print(f"  Sleeper returned {len(projections)} projected players.")
 
+    board = _fill_ids_from_projections(board, projections)
+
     merged = pd.merge(board, projections, on="sleeper_id", how="outer", suffixes=("", "_sleeper"))
 
     # The ADP file is authoritative for anyone it lists; Sleeper fills the rest.
@@ -300,15 +367,64 @@ def _build_adp_board(season: int) -> pd.DataFrame:
 
     # --- Sleeper IDs ---
     player_ids = get_sleeper_ids()
-    id_map = dict(zip(player_ids["name"], player_ids["sleeper_id"]))
-    board["sleeper_id"] = board["display_name"].apply(
-        lambda name: canonical_sleeper_id(id_map.get(NAME_MAP.get(name, name)))
+    index = _build_name_index(
+        player_ids["name"], player_ids["position"], player_ids["sleeper_id"]
     )
+    board["sleeper_id"] = [
+        _resolve_sleeper_id(name, pos, index)
+        for name, pos in zip(board["display_name"], board["pos"])
+    ]
     # nfl_data_py only covers players, so team defenses never resolve. Sleeper keys
     # defenses by the team abbreviation itself ("DEN"), so use that as the id.
     board.loc[is_def, "sleeper_id"] = board.loc[is_def, "team"]
 
-    return board.drop_duplicates(subset=["sleeper_id"], keep="first")
+    resolved = board["sleeper_id"].notna().sum()
+    print(f"  Resolved Sleeper ids for {resolved}/{len(board)} ADP rows.")
+
+    # Keep unresolved rows here; _fill_ids_from_projections gets a second attempt
+    # before prepare_data drops whatever is still unidentifiable.
+    identified = board[board["sleeper_id"].notna()].drop_duplicates(
+        subset=["sleeper_id"], keep="first"
+    )
+    return pd.concat([identified, board[board["sleeper_id"].isna()]], ignore_index=True)
+
+
+def _fill_ids_from_projections(board: pd.DataFrame, projections: pd.DataFrame) -> pd.DataFrame:
+    """
+    Second pass at the ADP rows nflverse could not identify.
+
+    Sleeper's projection feed is keyed by the same ids and carries Sleeper's own
+    spelling, so it resolves players nflverse is missing entirely -- rookie kickers
+    especially, who nflverse tends not to have until they play a snap. Matching is
+    on normalized name *and* position, so two players sharing a name cannot swap.
+    """
+    missing = board["sleeper_id"].isna()
+    if not missing.any():
+        return board
+
+    index = _build_name_index(
+        projections["display_name"], projections["pos"], projections["sleeper_id"]
+    )
+    taken = set(board.loc[~missing, "sleeper_id"])
+
+    filled = []
+    for name, pos in zip(board.loc[missing, "display_name"], board.loc[missing, "pos"]):
+        sid = _resolve_sleeper_id(name, pos, index)
+        filled.append(None if sid in taken else sid)
+
+    board.loc[missing, "sleeper_id"] = filled
+    recovered = sum(1 for sid in filled if sid)
+    if recovered:
+        print(f"  Recovered {recovered} more id(s) from Sleeper's projection feed.")
+
+    # Dedupe only the identified rows. drop_duplicates treats every NaN key as
+    # equal to every other, so running it across the whole frame would collapse
+    # all the still-unidentified players into a single row and hide them from the
+    # report that is supposed to name them.
+    identified = board[board["sleeper_id"].notna()].drop_duplicates(
+        subset=["sleeper_id"], keep="first"
+    )
+    return pd.concat([identified, board[board["sleeper_id"].isna()]], ignore_index=True)
 
 
 def prepare_data(season: int | None = None, projection_source: str | None = None) -> pd.DataFrame:
@@ -337,12 +453,20 @@ def prepare_data(season: int | None = None, projection_source: str | None = None
 
     final_data = merged.reindex(columns=DB_COLUMNS).copy()
 
-    # sleeper_id is the primary key, so rows without one cannot be stored.
+    # sleeper_id is the primary key, so rows without one cannot be stored. These are
+    # dropped ADP rows -- the player is losing their ADP, so report them by ADP and
+    # not alphabetically. Anything here inside the draftable range needs a NAME_MAP
+    # entry; everything past ~round 20 is noise.
     unresolved = final_data[final_data["sleeper_id"].isna()]
     if not unresolved.empty:
-        print(f"\n  Dropping {len(unresolved)} row(s) with no Sleeper ID (first 10):")
-        for name in unresolved["display_name"].head(10):
-            print(f"    - {name}")
+        print(f"\n  Dropping {len(unresolved)} row(s) with no Sleeper ID, best ADP first:")
+        ranked = unresolved.sort_values("ppr_adp", na_position="last")
+        for _, row in ranked.head(15).iterrows():
+            print(f"    - adp={str(row['ppr_adp']):<8} {row['display_name']} ({row['pos']})")
+        draftable = ranked[ranked["ppr_adp"] <= 200]
+        if not draftable.empty:
+            print(f"    Warning: {len(draftable)} of these are inside ADP 200 and "
+                  f"should be added to NAME_MAP.")
     final_data.dropna(subset=["sleeper_id"], inplace=True)
 
     _report_gaps(final_data)

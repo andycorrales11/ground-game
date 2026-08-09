@@ -33,7 +33,13 @@ DEFAULT_TEAMS: int = 12
 DEFAULT_ROUNDS: int = 20
 DEFAULT_DRAFT_FORMAT: str = 'STD'
 
-# VORP positional adjustments
+# Positions VORP is computed for. K and DEF were excluded while the Athletic CSVs
+# were the projection source, because those files never covered them -- which left
+# every kicker and defense pinned at VORP 0. Sleeper projects them, so they now get
+# a real value like everyone else.
+VORP_POSITIONS: List[str] = ["QB", "RB", "WR", "TE", "K", "DEF"]
+
+# VORP positional adjustments. Anything absent is 1.0.
 POSITION_ADJUSTMENT: dict = {
     "QB": 0.8,
     "RB": 1.0,

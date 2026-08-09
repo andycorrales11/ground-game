@@ -8,12 +8,10 @@ def calculate_positional_scarcity(players: pd.DataFrame) -> dict:
     """
     scarcity = {}
     for pos in ['QB', 'RB', 'WR', 'TE']:
-        pos_players = players[players['pos'] == pos].sort_values(by='VORP', ascending=False)
-        if len(pos_players) > 1:
-            # Scarcity is the VORP difference between the best and second-best player
-            scarcity[pos] = pos_players.iloc[0]['VORP'] - pos_players.iloc[1]['VORP']
-        else:
-            scarcity[pos] = 0
+        # Unprojected players carry NaN VORP; drop them rather than let one land on
+        # iloc[1] and make the whole gap NaN, which then loses every max() it enters.
+        ranked = players.loc[players['pos'] == pos, 'VORP'].dropna().sort_values(ascending=False)
+        scarcity[pos] = float(ranked.iloc[0] - ranked.iloc[1]) if len(ranked) > 1 else 0.0
     return scarcity
 
 def calculate_draft_score(players: pd.DataFrame) -> pd.DataFrame:
