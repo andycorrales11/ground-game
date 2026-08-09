@@ -132,7 +132,9 @@ def simulate_to_next_turn(
             )
 
         cpu_team = teams_sim[team_index]
-        cpu_pick_name = utils.normalize_name(simulate_cpu_pick(available_for_cpu, cpu_team))
+        cpu_pick_name = utils.normalize_name(
+            simulate_cpu_pick(available_for_cpu, cpu_team, draft_sim.rounds)
+        )
         pos = draft_sim.draft_player(cpu_pick_name)
         if pos:
             cpu_team.add_player(cpu_pick_name, pos)

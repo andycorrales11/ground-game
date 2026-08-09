@@ -372,7 +372,7 @@ class DraftManagerService:
         if available_players.empty:
             return {"message": "No more players available for CPU pick.", "status": "completed"}
 
-        cpu_pick_name = simulate_cpu_pick(available_players, current_team)
+        cpu_pick_name = simulate_cpu_pick(available_players, current_team, draft_obj.rounds)
         pos = draft_obj.draft_player(normalize_name(cpu_pick_name))
 
         if pos:
@@ -532,7 +532,7 @@ class DraftManagerService:
             available_players['display_name'].map(session_state["vona_data"]).fillna(0.0)
         )
 
-        player_name = simulate_user_auto_pick(available_players, current_team)
+        player_name = simulate_user_auto_pick(available_players, current_team, draft_obj.rounds)
         pos = draft_obj.draft_player(normalize_name(player_name))
 
         if pos:

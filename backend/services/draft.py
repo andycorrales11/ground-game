@@ -146,3 +146,14 @@ class Team:
         Counts the number of players of a specific position on the team.
         """
         return self._position_counts[pos]
+
+    @property
+    def picks_made(self) -> int:
+        """
+        How many players this team has drafted, whether or not a slot was free.
+
+        This is also the team's round number minus one, which is how the pick
+        logic knows how close the draft is to the end without redoing the snake
+        arithmetic that already exists in four other places.
+        """
+        return sum(self._position_counts.values())

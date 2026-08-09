@@ -119,6 +119,19 @@ Formats are **columns**, not rows: `std_adp`/`half_ppr_adp`/`ppr_adp` and `std_p
 `backend/services/simulation_service.py` scores players on a **lower-is-better** scale:
 
 - `simulate_cpu_pick` — blends VORP rank and ADP rank 10/90, applies a ×5.0 penalty for a 3rd QB and a ×0.70 bonus for unfilled starting slots, then samples from the top 10 with a fixed probability vector (60% top choice) so drafts aren't deterministic.
+
+**Kickers and defenses are held back by `_apply_late_round_penalty`.** K/DEF ADP sits around 120–200, which is the best thing left on the board by the middle rounds, and K/DEF are *starting* slots so the ×0.70 need bonus actively pulls them forward. Three regimes, keyed off `total_rounds - team.picks_made`:
+
+| Situation | Multiplier | Effect |
+|---|---|---|
+| Already have one | `DUPLICATE_PENALTY` 100 | only one slot exists |
+| Final `LATE_ROUND_GRACE` (2) rounds | `LATE_ROUND_BONUS` 0.15 | the empty slot becomes the priority |
+| Otherwise | `LATE_ROUND_PENALTY` 50 | bench first |
+| …but best available, within `ELITE_WINDOW` (4) | `ELITE_PENALTY` 8 | the elite defense that goes early |
+
+**The penalty has to be this large.** A defense with the best remaining ADP scores near 1.0, and the CPU samples from the top *10* — ×12 only moved it to about rank 8, still inside the window, so defenses still went in round 10. And the final-rounds *bonus* is not optional: with a penalty that merely lifted, 40 of 60 teams finished the draft with no kicker at all.
+
+`rounds_remaining` comes from `Team.picks_made`, deliberately — not a fifth copy of the snake-order arithmetic.
 - `simulate_user_auto_pick` — VONA/VORP/ADP weighted 50/20/30, picks the single best score with no randomness. It reads a `VONA` column that lives in the session, not on the board, so **every caller must attach it first**; `get_current_draft_state` attaches it to its own copy, and `process_auto_pick_helper` not doing the same is what made `POST /draft/helper/{id}/auto-pick` raise `KeyError: 'VONA'` on every call.
 
 Neither takes the big board any more. They only ever used it to count a team's players by position, which `Team` now tracks itself.
