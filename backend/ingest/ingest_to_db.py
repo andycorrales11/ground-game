@@ -50,7 +50,7 @@ PROJ_FILE_RE = re.compile(
 )
 
 DB_COLUMNS = [
-    "sleeper_id", "display_name", "normalized_name", "team", "pos",
+    "sleeper_id", "display_name", "normalized_name", "team", "pos", "bye",
     "std_adp", "half_ppr_adp", "ppr_adp",
     "std_proj_pts", "half_ppr_proj_pts", "ppr_proj_pts",
 ]
@@ -70,6 +70,21 @@ DEFENSE_TEAM_ABBR = {
     "New York Jets": "NYJ", "Philadelphia Eagles": "PHI", "Pittsburgh Steelers": "PIT",
     "San Francisco 49ers": "SF", "Seattle Seahawks": "SEA", "Tampa Bay Buccaneers": "TB",
     "Tennessee Titans": "TEN", "Washington Commanders": "WAS",
+}
+
+# The sources disagree on a few team abbreviations. FantasyPros writes "JAC" for
+# Jacksonville's players while Sleeper writes "JAX", which split the roster into
+# two teams and gave the board 33 of them -- caught by the count check in
+# _fill_byes_from_team. Canonical form is Sleeper's, since that is what
+# DEFENSE_TEAM_ABBR already produces and what the live draft feed sends.
+TEAM_ABBR_ALIASES = {
+    "JAC": "JAX",
+    "WSH": "WAS",
+    "LA": "LAR",
+    "ARZ": "ARI",
+    "BLT": "BAL",
+    "CLV": "CLE",
+    "HST": "HOU",
 }
 
 # nfl_data_py disagrees with FantasyPros on a handful of names. Suffix-only
@@ -184,7 +199,7 @@ def _resolve_adp_file(season: int, label: str, adp_dir: Path) -> Path:
 
 def _normalize_adp_frame(df: pd.DataFrame, source: str) -> pd.DataFrame:
     """
-    Reduces either FantasyPros export layout to Player / POS / Team / AVG.
+    Reduces either FantasyPros export layout to Player / POS / Team / Bye / AVG.
 
     The newer "Overall ADP Rankings" export drops the Team and Bye columns and
     folds them into the player cell ("Jahmyr Gibbs   DET (6)"), and carries a
@@ -194,7 +209,12 @@ def _normalize_adp_frame(df: pd.DataFrame, source: str) -> pd.DataFrame:
         raise ValueError(f"{source} is missing expected columns: needs POS and AVG")
 
     if "Player" in df.columns and "Team" in df.columns:
-        return df[["Player", "POS", "Team", "AVG"]].copy()
+        out = df[["Player", "POS", "Team", "AVG"]].copy()
+        # The older export carries Bye as its own column. Treat it as optional so a
+        # layout without one still loads -- _fill_byes_from_team can recover it from
+        # the team anyway.
+        out["Bye"] = pd.to_numeric(df["Bye"], errors="coerce") if "Bye" in df.columns else pd.NA
+        return out
 
     if "Player (Bye)" not in df.columns:
         raise ValueError(
@@ -207,6 +227,7 @@ def _normalize_adp_frame(df: pd.DataFrame, source: str) -> pd.DataFrame:
         "Player": parts["name"].str.strip(),
         "POS": df["POS"],
         "Team": parts["team"],  # NaN for unsigned free agents
+        "Bye": pd.to_numeric(parts["bye"], errors="coerce"),
         "AVG": df["AVG"],
     })
 
@@ -220,9 +241,9 @@ def load_adp_data(season: int, adp_dir: Path) -> pd.DataFrame:
     """
     Loads the three FantasyPros ADP CSVs and merges them into a single frame.
 
-    POS and Team are coalesced across all three files. Taking them from the STD
-    file alone leaves every player absent from that file with no position, which
-    is most of the deep WR/TE pool.
+    POS, Team and Bye are coalesced across all three files. Taking them from the
+    STD file alone leaves every player absent from that file with no position,
+    which is most of the deep WR/TE pool.
     """
     frames = {}
     for label, adp_col in ADP_FORMATS.items():
@@ -231,9 +252,10 @@ def load_adp_data(season: int, adp_dir: Path) -> pd.DataFrame:
         print(f"  {label:<8} {len(df):>4} rows from {path.name}")
         frames[adp_col] = df.rename(columns={"AVG": adp_col})
 
-    # First non-null POS/Team across all three files wins.
+    # First non-null POS/Team/Bye across all three files wins -- groupby.first()
+    # skips NaN, so a player listed in only one file still keeps their identity.
     identity = pd.concat(
-        [df[["Player", "POS", "Team"]] for df in frames.values()], ignore_index=True
+        [df[["Player", "POS", "Team", "Bye"]] for df in frames.values()], ignore_index=True
     ).groupby("Player", as_index=False).first()
 
     adp_data = identity
@@ -348,7 +370,7 @@ def _merge_csv_projections(board: pd.DataFrame) -> pd.DataFrame:
 def _build_adp_board(season: int) -> pd.DataFrame:
     """ADP, position, team and resolved Sleeper id for every drafted player."""
     adp_data = load_adp_data(season, config.ADP_DIR)
-    board = adp_data.rename(columns={"Player": "display_name", "Team": "team"})
+    board = adp_data.rename(columns={"Player": "display_name", "Team": "team", "Bye": "bye"})
 
     # FantasyPros encodes positional rank in POS ("WR12"); strip it, then normalize
     # its "DST" to the "DEF" used by config.DEFAULT_ROSTER.
@@ -427,6 +449,58 @@ def _fill_ids_from_projections(board: pd.DataFrame, projections: pd.DataFrame) -
     return pd.concat([identified, board[board["sleeper_id"].isna()]], ignore_index=True)
 
 
+def _canonicalize_teams(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Reduces each team to one abbreviation so the two sources agree.
+
+    Anything keyed on team -- bye weeks, and any future stacking or scarcity work --
+    silently treats "JAC" and "JAX" as different franchises otherwise.
+    """
+    before = set(df["team"].dropna())
+    df["team"] = df["team"].replace(TEAM_ABBR_ALIASES)
+    merged_away = sorted(before - set(df["team"].dropna()))
+    if merged_away:
+        print(f"  Teams: folded {', '.join(merged_away)} into their canonical form.")
+    return df
+
+
+def _fill_byes_from_team(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Fills missing bye weeks from the player's team.
+
+    A bye week is a property of the NFL team, not the player, so one row per team
+    is enough to date the other 50. This is what covers everyone FantasyPros does
+    not list -- the projection-only deep pool, who arrive from Sleeper with a team
+    but no ADP row to carry a bye -- and defenses, whose team abbreviation is their
+    id.
+
+    The per-team value is the mode rather than the first, so a single malformed row
+    cannot redate a whole roster.
+    """
+    if "bye" not in df.columns:
+        df["bye"] = pd.NA
+        return df
+
+    df["bye"] = pd.to_numeric(df["bye"], errors="coerce")
+
+    known = df.dropna(subset=["team", "bye"])
+    if known.empty:
+        print("  Warning: no bye weeks parsed from the ADP files at all.")
+        return df
+
+    team_bye = known.groupby("team")["bye"].agg(lambda s: s.mode().iloc[0])
+
+    missing = df["bye"].isna() & df["team"].notna()
+    df.loc[missing, "bye"] = df.loc[missing, "team"].map(team_bye)
+
+    recovered = int(missing.sum() - (df["bye"].isna() & df["team"].notna()).sum())
+    print(f"  Byes: {len(team_bye)} teams dated; recovered {recovered} player(s) from their team.")
+    if len(team_bye) != 32:
+        print(f"    Warning: expected 32 teams with a bye, got {len(team_bye)}.")
+
+    return df
+
+
 def prepare_data(season: int | None = None, projection_source: str | None = None) -> pd.DataFrame:
     """
     Builds the players table from FantasyPros ADP plus a projection source.
@@ -450,8 +524,14 @@ def prepare_data(season: int | None = None, projection_source: str | None = None
         raise ValueError(f"Unknown projection source '{source}'. Use 'sleeper' or 'csv'.")
 
     merged["normalized_name"] = merged["display_name"].apply(normalize_name)
+    merged = _canonicalize_teams(merged)
+    merged = _fill_byes_from_team(merged)
 
     final_data = merged.reindex(columns=DB_COLUMNS).copy()
+
+    # bye is an INT column. Carried as a float it would reach COPY as "6.0", which
+    # Postgres rejects; Int64 keeps it whole while still allowing a null.
+    final_data["bye"] = final_data["bye"].astype("Int64")
 
     # sleeper_id is the primary key, so rows without one cannot be stored. These are
     # dropped ADP rows -- the player is losing their ADP, so report them by ADP and
@@ -489,7 +569,7 @@ def _report_gaps(df: pd.DataFrame) -> None:
         label = "(none)" if pd.isna(pos) else pos
         print(f"    {label:<8} {n}")
 
-    gap_columns = [c for c in DB_COLUMNS if c.endswith(("_adp", "_proj_pts"))] + ["pos", "team"]
+    gap_columns = [c for c in DB_COLUMNS if c.endswith(("_adp", "_proj_pts"))] + ["pos", "team", "bye"]
     gaps = {col: int(df[col].isna().sum()) for col in gap_columns}
     gaps = {col: n for col, n in gaps.items() if n}
     if gaps:

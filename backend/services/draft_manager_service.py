@@ -26,8 +26,68 @@ def _json_safe_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
     return df.astype(object).where(pd.notna(df), None).to_dict(orient="records")
 
 
+def _roster_and_conflicts(
+    team: Team, board: pd.DataFrame
+) -> tuple[List[Dict[str, Any]], Dict[int, List[str]]]:
+    """
+    The team's roster as display rows, plus its bye-week conflicts.
+
+    Both come back together because both need the same normalized-name-to-display-
+    name lookup off the board -- Team.roster holds normalized names. The conflict
+    *rule* stays on Team, which is the only thing that knows the byes; this just
+    renames the output so a warning and the roster beneath it do not disagree about
+    what a player is called.
+    """
+    if board is None or board.empty:
+        lookup: Dict[str, Dict[str, Any]] = {}
+    else:
+        deduped = board.drop_duplicates(subset=["normalized_name"], keep="first")
+        lookup = deduped.set_index("normalized_name")[["display_name", "pos"]].to_dict("index")
+
+    def display(player: str) -> str:
+        return lookup.get(player, {}).get("display_name", player)
+
+    rows = [
+        {
+            "slot": slot,
+            "player": display(player) if player else None,
+            "pos": lookup.get(player, {}).get("pos") if player else None,
+            # Bye comes off the Team rather than the board: the Team is what was
+            # told the bye at pick time, and is what the conflict check reads.
+            "bye": team.bye_week(player) if player else None,
+        }
+        for slot, player in team.roster.items()
+    ]
+
+    conflicts = {
+        week: [display(p) for p in players]
+        for week, players in team.bye_conflicts().items()
+    }
+    return rows, conflicts
+
+
 class DraftManagerService:
     _active_draft_sessions: Dict[str, Dict[str, Any]] = {}
+
+    @classmethod
+    def _user_team(cls, session_state: Dict[str, Any]) -> Team | None:
+        """
+        The user's own Team, in either mode.
+
+        Simulation indexes teams_list by draft slot; live mode indexes it by roster
+        id, which is the mapping the rest of the live code already assumes.
+        """
+        teams_list: List[Team] = session_state["teams_list"]
+
+        if session_state["draft_id"]:
+            user_roster_id = session_state.get("user_roster_id")
+            if not user_roster_id:
+                return None
+            index = int(user_roster_id) - 1
+        else:
+            index = session_state["user_pick_slot"] - 1
+
+        return teams_list[index] if 0 <= index < len(teams_list) else None
 
     @classmethod
     def _calculate_and_store_vona(cls, session_state: Dict[str, Any]):
@@ -282,7 +342,13 @@ class DraftManagerService:
 
         # Limit for display after filtering and sorting
         available_players_display = _json_safe_records(available_players.head(50))
-        
+
+        user_team = cls._user_team(session_state)
+        user_roster, bye_conflicts = (
+            _roster_and_conflicts(user_team, session_state["original_big_board"])
+            if user_team else ([], {})
+        )
+
         return {
             "session_id": session_id,
             "current_pick_num": current_pick_num + 1, # Display as 1-indexed
@@ -291,6 +357,10 @@ class DraftManagerService:
             "available_players": available_players_display,
             "drafted_players_count": len(draft_obj.drafted_players),
             "total_picks": draft_obj.rounds * draft_obj.teams,
+            "user_roster": user_roster,
+            # {week: [player, ...]} for weeks that would sideline two or more of the
+            # user's players at once.
+            "bye_conflicts": bye_conflicts,
             "status": "in_progress"
         }
 
@@ -332,7 +402,7 @@ class DraftManagerService:
         pos = draft_obj.draft_player(normalized_player_name)
 
         if pos:
-            current_team.add_player(normalized_player_name, pos)
+            current_team.add_player(normalized_player_name, pos, draft_obj.player_bye(normalized_player_name))
             session_state["current_pick_num"] += 1
             logging.info(f"User drafted: {player_name} ({pos})")
             cls._calculate_and_store_vona(session_state) # Recalculate VONA after pick
@@ -376,7 +446,8 @@ class DraftManagerService:
         pos = draft_obj.draft_player(normalize_name(cpu_pick_name))
 
         if pos:
-            current_team.add_player(normalize_name(cpu_pick_name), pos)
+            normalized_cpu_name = normalize_name(cpu_pick_name)
+            current_team.add_player(normalized_cpu_name, pos, draft_obj.player_bye(normalized_cpu_name))
             session_state["current_pick_num"] += 1
             logging.info(f"CPU (Team {team_index + 1}) drafted: {cpu_pick_name} ({pos}).")
             cls._calculate_and_store_vona(session_state) # Recalculate VONA after pick
@@ -438,7 +509,16 @@ class DraftManagerService:
                 # Only draft if not already drafted (to prevent issues with re-polling)
                 if normalized_name not in draft_obj.drafted_players:
                     draft_obj.draft_player(normalized_name)
-                    # In live mode, we don't add to teams_list as Sleeper manages rosters
+                    # Sleeper owns the opponents' rosters, so teams_list stays empty
+                    # for them. The user's own team is tracked anyway -- it is what
+                    # the bye-conflict warning reads, and that warning is worth more
+                    # in a live draft than in a simulation.
+                    if str(roster_id) == str(session_state.get("user_roster_id")):
+                        user_team = cls._user_team(session_state)
+                        if user_team:
+                            user_team.add_player(
+                                normalized_name, pos, draft_obj.player_bye(normalized_name)
+                            )
                     new_picks_made.append({
                         "pick_number": i + 1,
                         "roster_id": roster_id,
@@ -536,7 +616,8 @@ class DraftManagerService:
         pos = draft_obj.draft_player(normalize_name(player_name))
 
         if pos:
-            current_team.add_player(normalize_name(player_name), pos)
+            normalized_auto_name = normalize_name(player_name)
+            current_team.add_player(normalized_auto_name, pos, draft_obj.player_bye(normalized_auto_name))
             session_state["current_pick_num"] += 1
             logging.info(f"Auto-drafting: {player_name} ({pos})")
             cls._calculate_and_store_vona(session_state)

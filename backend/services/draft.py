@@ -23,6 +23,24 @@ class Draft:
         """
         return self.players[~self.players['normalized_name'].isin(self.drafted_players)]
 
+    def player_bye(self, player_name: str) -> int | None:
+        """
+        The bye week for a player, by normalized name.
+
+        Returns None when the player is unknown, when the board predates the bye
+        column (the synthetic boards in the tests do), or when the bye itself is
+        null -- an unsigned free agent has no team and so no bye.
+        """
+        if 'bye' not in self.players.columns:
+            return None
+
+        rows = self.players.loc[self.players['normalized_name'] == player_name, 'bye']
+        if rows.empty:
+            return None
+
+        bye = rows.iloc[0]
+        return None if pd.isna(bye) else int(bye)
+
     def draft_player(self, player_name: str) -> str | None:
         """
         Marks a player as drafted.
@@ -62,6 +80,11 @@ class Team:
         # the CPU's third-QB penalty never fired. `pos` is known at add time.
         self._position_counts: Counter = Counter()
 
+        # Bye weeks are tallied the same way and for the same reason: the week is
+        # known at add time, and looking it back up would mean matching on a name
+        # form the roster does not promise to keep.
+        self._bye_weeks: Dict[str, int | None] = {}
+
     def copy(self) -> "Team":
         """
         A detached duplicate with the roster and tallies intact.
@@ -76,16 +99,22 @@ class Team:
         clone = Team(list(self.roster.keys()))
         clone.roster = dict(self.roster)
         clone._position_counts = self._position_counts.copy()
+        clone._bye_weeks = dict(self._bye_weeks)
         return clone
 
-    def add_player(self, player: str, pos: str):
+    def add_player(self, player: str, pos: str, bye: int | None = None):
         """
         Adds a player to the first available roster slot for their position.
 
         The tally is incremented even when no slot is free: a team that has drafted
         three quarterbacks has three regardless of where they sit.
+
+        `bye` is optional because the CPU simulation does not care about bye weeks
+        and would rather not carry the column through; a missing bye is simply not
+        counted against any week.
         """
         self._position_counts[pos] += 1
+        self._bye_weeks[player] = bye
 
         # Find a position-specific slot first
         for slot in self.roster:
@@ -146,6 +175,30 @@ class Team:
         Counts the number of players of a specific position on the team.
         """
         return self._position_counts[pos]
+
+    def bye_week(self, player: str) -> int | None:
+        """The bye week recorded for a rostered player, or None if unknown."""
+        return self._bye_weeks.get(player)
+
+    def bye_conflicts(self, threshold: int = 2) -> Dict[int, List[str]]:
+        """
+        Bye weeks where at least `threshold` rostered players are all out at once.
+
+        Players with an unknown bye are left out rather than bucketed together --
+        the 71 unsigned free agents in the pool all have a null bye, and grouping
+        them would invent a week where the whole bench disappears.
+        """
+        weeks: Dict[int, List[str]] = {}
+        for player, bye in self._bye_weeks.items():
+            if bye is None:
+                continue
+            weeks.setdefault(int(bye), []).append(player)
+
+        return {
+            week: sorted(players)
+            for week, players in sorted(weeks.items())
+            if len(players) >= threshold
+        }
 
     @property
     def picks_made(self) -> int:

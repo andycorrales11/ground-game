@@ -4,6 +4,7 @@ CREATE TABLE players (
     normalized_name TEXT,
     team VARCHAR(10),
     pos VARCHAR(10),
+    bye INT,
     std_adp FLOAT,
     half_ppr_adp FLOAT,
     ppr_adp FLOAT,

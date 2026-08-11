@@ -4,34 +4,15 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import axios from 'axios';
 
+import RosterPanel from '../../_components/RosterPanel';
+import { DraftState } from '../../_components/types';
+
 const API = 'http://localhost:8000';
 
 // How often to ask Sleeper for new picks. The board refresh that follows is
 // expensive on your turn (VONA runs a forward simulation per candidate), so this
 // is deliberately not aggressive.
 const POLL_INTERVAL_MS = 8000;
-
-interface Player {
-  normalized_name: string;
-  display_name: string;
-  pos: string;
-  team: string | null;
-  ADP: number | null;
-  VORP: number | null;
-  VONA: number | null;
-  [key: string]: string | number | null | undefined;
-}
-
-interface DraftState {
-  session_id: string;
-  current_pick_num: number;
-  is_user_turn: boolean;
-  on_clock_team: { type: string; roster_id?: string; team_index?: number };
-  available_players: Player[];
-  drafted_players_count: number;
-  total_picks: number;
-  status: string;
-}
 
 interface LivePick {
   pick_number: number;
@@ -140,7 +121,7 @@ export default function LiveDraftPage() {
     );
   }
 
-  const { current_pick_num, is_user_turn, on_clock_team, available_players, drafted_players_count, total_picks, status } = draftState;
+  const { current_pick_num, is_user_turn, on_clock_team, available_players, drafted_players_count, total_picks, user_roster, bye_conflicts, status } = draftState;
 
   return (
     <div style={{ fontFamily: 'sans-serif', maxWidth: '900px', margin: '50px auto', padding: '20px', border: '1px solid #ccc', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
@@ -261,6 +242,7 @@ export default function LiveDraftPage() {
               <th style={{ padding: '8px', borderBottom: '1px solid #ddd', textAlign: 'left' }}>Name</th>
               <th style={{ padding: '8px', borderBottom: '1px solid #ddd', textAlign: 'left' }}>Pos</th>
               <th style={{ padding: '8px', borderBottom: '1px solid #ddd', textAlign: 'left' }}>Team</th>
+              <th style={{ padding: '8px', borderBottom: '1px solid #ddd', textAlign: 'left' }}>Bye</th>
               <th style={{ padding: '8px', borderBottom: '1px solid #ddd', textAlign: 'left' }}>ADP</th>
               <th style={{ padding: '8px', borderBottom: '1px solid #ddd', textAlign: 'left' }}>VORP</th>
               <th style={{ padding: '8px', borderBottom: '1px solid #ddd', textAlign: 'left' }}>VONA</th>
@@ -272,6 +254,7 @@ export default function LiveDraftPage() {
                 <td style={{ padding: '8px' }}>{player.display_name}</td>
                 <td style={{ padding: '8px' }}>{player.pos}</td>
                 <td style={{ padding: '8px' }}>{player.team}</td>
+                <td style={{ padding: '8px' }}>{player.bye ?? '—'}</td>
                 <td style={{ padding: '8px' }}>{player.ADP?.toFixed(1) ?? 'N/A'}</td>
                 <td style={{ padding: '8px' }}>{player.VORP?.toFixed(1) ?? 'N/A'}</td>
                 <td style={{ padding: '8px' }}>{player.VONA?.toFixed(1) ?? 'N/A'}</td>
@@ -280,6 +263,8 @@ export default function LiveDraftPage() {
           </tbody>
         </table>
       </div>
+
+      <RosterPanel roster={user_roster} byeConflicts={bye_conflicts} />
     </div>
   );
 }
