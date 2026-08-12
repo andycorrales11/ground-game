@@ -37,11 +37,17 @@ jobs:
           cache-dependency-path: requirements.txt
 
       - name: Install dependencies
-        # pytest is deliberately not in requirements.txt -- it is not needed to run
-        # the app, only to test it.
+        # pytest and httpx2 are deliberately not in requirements.txt -- neither is
+        # needed to run the app, only to test it. httpx2 is what fastapi's
+        # TestClient imports through starlette; without it main_test.py fails at
+        # collection and takes the whole run with it.
+        #
+        # requirements.txt pins nothing, so CI resolves newer versions than the
+        # local venv holds -- which is exactly why the package is httpx2 here and
+        # plain httpx locally. See the pinning issue.
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pytest
+          pip install -r requirements.txt pytest httpx2
 
       - name: Run tests
         # From the repository root: imports are absolute (from backend...) and
