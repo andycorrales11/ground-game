@@ -21,9 +21,18 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          # The codebase uses PEP 604 unions (str | None) throughout, which are a
-          # TypeError before 3.10.
-          python-version: "3.12"
+          # 3.11, not the 3.12 the local venv uses, and not by preference.
+          #
+          # nfl_data_py 0.3.3 pins pandas <2.0, and pandas 1.5.3 ships no wheel
+          # for 3.12 -- it supports up to 3.11. On 3.12 pip therefore builds
+          # pandas from source, and that build fails outright because setuptools
+          # 81 removed pkg_resources. 3.11 installs the same pinned stack from
+          # wheels in seconds.
+          #
+          # The floor is 3.10: the codebase uses PEP 604 unions (str | None)
+          # throughout, which are a TypeError before that. This pin goes away
+          # with nfl_data_py itself -- see the nflreadpy migration issue.
+          python-version: "3.11"
           cache: pip
           cache-dependency-path: requirements.txt
 
