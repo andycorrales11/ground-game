@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [main, mvp]
+  pull_request:
+    branches: [main]
+
+# A second push to the same branch cancels the first -- these jobs are not
+# stateful and there is no value in finishing a run nobody is waiting on.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # 3.11, not the 3.12 the local venv uses, and not by preference.
+          #
+          # nfl_data_py 0.3.3 pins pandas <2.0, and pandas 1.5.3 ships no wheel
+          # for 3.12 -- it supports up to 3.11. On 3.12 pip therefore builds
+          # pandas from source, and that build fails outright because setuptools
+          # 81 removed pkg_resources. 3.11 installs the same pinned stack from
+          # wheels in seconds.
+          #
+          # The floor is 3.10: the codebase uses PEP 604 unions (str | None)
+          # throughout, which are a TypeError before that. This pin goes away
+          # with nfl_data_py itself -- see #30 (nflreadpy) and #34 (pinning).
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        # pytest and httpx2 are deliberately not in requirements.txt -- neither is
+        # needed to run the app, only to test it. httpx2 is what fastapi's
+        # TestClient imports through starlette; without it main_test.py fails at
+        # collection and takes the whole run with it.
+        #
+        # requirements.txt pins nothing, so CI resolves newer versions than the
+        # local venv holds -- which is exactly why the package is httpx2 here and
+        # plain httpx locally. See #34.
+        #
+        # httpx2 reads like a typosquat and is not. starlette 1.6.0 declares it
+        # itself ("httpx2>=2.0.0; extra == 'full'"); it is the httpx 2.x line at
+        # github.com/pydantic/httpx2, published by httpx's own author, after
+        # Encode's projects moved to the Pydantic org. Verify against starlette's
+        # own metadata before ever swapping this for something that "looks right".
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest httpx2
+
+      - name: Run tests
+        # From the repository root: imports are absolute (from backend...) and
+        # config.py resolves data paths from Path.cwd().
+        #
+        # vorp_test.py is excluded because it is not a pytest test at all -- it is a
+        # print-based script that queries the live database. Everything else runs
+        # without a database or network.
+        run: pytest backend/tests/ --ignore=backend/tests/vorp_test.py -q
+
+  frontend:
+    name: Frontend lint, types and tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        # next lint does not typecheck, and next build only reports the first error
+        # it hits, so this runs on its own.
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
