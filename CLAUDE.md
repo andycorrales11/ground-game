@@ -88,6 +88,12 @@ The branch point is `session_state["draft_id"]`:
 
 The same snake-order calculation is reimplemented in five places (`draft_manager_service` ×4, `vbd_service.calculate_vona`). Changing draft-order logic means changing all of them.
 
+**Every pick path has to check `_is_complete` first.** It is `current_pick_num >= rounds * teams`, which in live mode is the same bound as `len(picks_order)`. Only live mode used to check anything; simulation was unbounded, so `process_cpu_pick` cycled the team index round the board on the modulo and "Simulate next pick" kept drafting for hundreds of picks past the final round until the player pool ran dry. `get_current_draft_state` returns its **full** payload with `status: "completed"` and a null `on_clock_team` — a bare status, which is what live mode returned, leaves the room with nothing to render at exactly the moment you want to look at the roster you ended up with.
+
+**Roster length follows the round count.** `config.roster_slots(rounds)` is the fixed starting lineup plus exactly enough bench, and `initialize_draft` passes it to both `Draft` and every `Team`. A fixed 18-slot roster meant the default 20-round draft dropped two picks with nowhere to sit (`Team.add_player` still tallies them, so only the panel loses them) and the setup form's 15-round default drew three bench rows nobody could ever fill.
+
+Each board row carries `PTS`, the season projection, copied from the format-specific `fantasy_points_*` column by `get_current_draft_state`. It is a **copy, not a rename** — VORP is derived from that column and the CPU simulation reads it off the same board by its real name. The alias exists because the response never says which scoring format the session is in, so the frontend would otherwise have to guess the column name. Unprojected players keep NaN and reach the client as `null`, on the same rule as VORP.
+
 `get_current_draft_state` also returns `user_roster` and `bye_conflicts`, built by `_roster_and_conflicts`. The user's own `Team` is found by `_user_team`, which is the one place that knows simulation indexes `teams_list` by draft slot while live mode indexes it by roster id.
 
 ### Valuation: VORP and VONA
@@ -109,7 +115,7 @@ The same snake-order calculation is reimplemented in five places (`draft_manager
 
 ### Scoring formats are baked into the schema
 
-Formats are **columns**, not rows: `std_adp`/`half_ppr_adp`/`ppr_adp` and `std_proj_pts`/`half_ppr_proj_pts`/`ppr_proj_pts`. `calculate_vorp` hard-rejects anything outside `['STD', 'PPR', 'HalfPPR']`, and `config.DEFAULT_ROSTER` is a module-level constant rather than per-league config. Supporting superflex, TE premium, 2QB, IDP, or custom scoring requires changing the schema, not just adding a branch.
+Formats are **columns**, not rows: `std_adp`/`half_ppr_adp`/`ppr_adp` and `std_proj_pts`/`half_ppr_proj_pts`/`ppr_proj_pts`. `calculate_vorp` hard-rejects anything outside `['STD', 'PPR', 'HalfPPR']`, and `config.DEFAULT_STARTERS` is a module-level constant rather than per-league config — only the *bench* varies, sized to the draft by `config.roster_slots(rounds)`. Supporting superflex, TE premium, 2QB, IDP, or custom scoring requires changing the schema, not just adding a branch.
 
 **Never derive a format string or column name inline.** `'HalfPPR'.lower()` is `'halfppr'`, but every column uses `half_ppr` — that one-character gap made half-PPR raise a `KeyError` on every draft, because `create_vbd_big_board` bridged it and `calculate_vorp` didn't. Both now go through `backend/utils.py`:
 

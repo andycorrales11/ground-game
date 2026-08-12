@@ -17,20 +17,40 @@ PROJECTIONS_DIR = DATA_DIR / "projections"
 PLAYER_ADP_DIR = DATA_DIR / "players_adp"
 
 # --- DRAFT SETTINGS ---
-DEFAULT_ROSTER: List[str] = [
-    "QB1", "RB1", "RB2", "WR1", "WR2", "TE1", "FLEX1", "FLEX2",
-    "K", "DEF", "BN1", "BN2", "BN3", "BN4", "BN5", "BN6",
-    "BN7", "BN8"
-]
-
-# Positional mapping for VBD calculations
-DEFAULT_ROSTER_POS: List[str] = [
-    "QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "FLEX",
-    "K", "DEF", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN"
+# The starting lineup is a league rule and does not vary with draft length.
+DEFAULT_STARTERS: List[str] = [
+    "QB1", "RB1", "RB2", "WR1", "WR2", "TE1", "FLEX1", "FLEX2", "K", "DEF"
 ]
 
 DEFAULT_TEAMS: int = 12
 DEFAULT_ROUNDS: int = 20
+
+
+def roster_slots(rounds: int) -> List[str]:
+    """
+    Roster slots for a draft of `rounds` rounds: the fixed starting lineup, then
+    exactly enough bench to hold every pick that is not a starter.
+
+    The bench has to be sized from the draft, not fixed. A hardcoded eight-slot
+    bench meant a 20-round draft had two picks with nowhere to sit -- `add_player`
+    tallies them but drops them off the roster panel -- while a 10-round draft
+    showed eight bench slots that could never be filled.
+
+    A draft shorter than the starting lineup gets no bench at all and leaves
+    starting slots empty, which is what actually happens in such a league.
+    """
+    bench = max(0, rounds - len(DEFAULT_STARTERS))
+    return DEFAULT_STARTERS + [f"BN{i}" for i in range(1, bench + 1)]
+
+
+DEFAULT_ROSTER: List[str] = roster_slots(DEFAULT_ROUNDS)
+
+# Positional mapping for VBD calculations. Only the starters matter here --
+# `calculate_vorp` counts starting slots per position to find replacement level,
+# and bench depth does not move it.
+DEFAULT_ROSTER_POS: List[str] = [
+    "QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "FLEX", "K", "DEF"
+]
 DEFAULT_DRAFT_FORMAT: str = 'STD'
 
 # Positions VORP is computed for. K and DEF were excluded while the Athletic CSVs
