@@ -1,38 +1,174 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/*
+  Automatic source detection is rooted at this file's directory, so it never
+  reaches src/lib. Every position colour class lives in src/lib/positions.ts and
+  nowhere else, which meant text-wr and border-l-rb were silently never
+  generated -- and because @theme only emits the custom properties its utilities
+  actually use, --color-wr disappeared with them. The board rendered every
+  position in chalk and the palette's whole premise quietly stopped working.
+*/
+@source "../lib";
+
+/*
+  Ground Game — "The Board"
+
+  The governing rule of this palette: saturation is reserved for position.
+  Nothing else on the page is coloured. A splash of colour therefore always
+  means the same thing, and the six position hues stay legible against a ground
+  that never competes with them.
+
+  Everything else earns emphasis without hue: the on-the-clock rail inverts,
+  tier cliffs are chalk hairlines, and bye-week severity is carried by weight
+  and a hatch. If you find yourself reaching for a seventh colour, the answer is
+  a different treatment, not a new token.
+*/
+@theme {
+  /* Ground: a night field, not neutral black. */
+  --color-pitch: #0a0f13; /* page */
+  --color-deck: #111820; /* raised panels */
+  --color-line: #1d2831; /* hairline rules */
+  --color-chalk: #e8eff4; /* primary text */
+  --color-dim: #7b8b99; /* secondary text */
+
+  /* Saturation is reserved for position. */
+  --color-qb: #ff5c7a;
+  --color-rb: #35d6a0;
+  --color-wr: #59a5ff;
+  --color-te: #ffb443;
+  --color-k: #b08cff;
+  --color-def: #8fa0ae;
 }
 
+/*
+  `inline` because these resolve to the per-element variables next/font sets on
+  <html>; a plain @theme block would try to resolve them at build time, when
+  they do not exist yet.
+*/
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-display: var(--font-barlow-condensed);
+  --font-body: var(--font-barlow);
+  --font-mono: var(--font-plex-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/*
+  Dark by design, not by preference. This is an instrument read under a pick
+  clock, and the position hues are calibrated against the dark ground -- there
+  is no light palette they would survive. `color-scheme` makes the native
+  controls and scrollbars follow instead of rendering as light chrome.
+*/
+:root {
+  color-scheme: dark;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-pitch);
+  color: var(--color-chalk);
+  font-family: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+  /* The board is a fixed-height pane that scrolls internally. */
+  overflow-x: hidden;
 }
 
-option {
-  color: #333;
+/*
+  Numbers are compared down a column, never read as prose, so they are always
+  tabular. Without this the ADP/VORP/VONA columns shimmy as values change.
+*/
+.tabular {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
 }
 
-select {
-  color: #333;
+/* Keyboard focus has to survive on a dark ground; the default ring does not. */
+:focus-visible {
+  outline: 2px solid var(--color-chalk);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 
-input {
-  color: #333;
+/*
+  Bye-week severity without spending a hue. A week that sidelines two players is
+  a nuisance you plan around; three or more is a week you probably lose. The
+  hatch density is the difference, so it survives a glance and does not rely on
+  colour vision.
+*/
+.hazard-mild {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--color-line) 0 3px,
+    transparent 3px 7px
+  );
+}
+
+.hazard-severe {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--color-dim) 0 3px,
+    transparent 3px 6px
+  );
+}
+
+/*
+  The on-the-clock rail. Loud by inversion rather than by colour -- a bright bar
+  in an otherwise dark room is the strongest signal available without breaking
+  the position-only rule.
+*/
+@keyframes clock-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.72;
+  }
+}
+
+.clock-live {
+  animation: clock-pulse 2.4s ease-in-out infinite;
+}
+
+/*
+  Refetch progress. A hairline sweeping the bottom of the rail, because the old
+  behaviour -- tearing the room down and printing "Loading draft..." -- meant
+  changing a filter mid-draft cost you sight of the board.
+*/
+@keyframes rail-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(500%);
+  }
+}
+
+.rail-sweep {
+  animation: rail-sweep 1.1s ease-in-out infinite;
+}
+
+/* The board scrolls a lot; the default scrollbar is a bright gash on this ground. */
+.board-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
+}
+
+.board-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.board-scroll::-webkit-scrollbar-thumb {
+  background: var(--color-line);
+  border-radius: 5px;
+}
+
+.board-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

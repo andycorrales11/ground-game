@@ -2,7 +2,15 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import axios from 'axios';
+
+import { errorMessage, startLiveDraft } from '@/lib/api';
+
+import {
+  Field,
+  controlClass,
+  primaryButtonClass,
+  quietButtonClass,
+} from '../_components/FormControls';
 
 export default function LiveDraftStartPage() {
   const router = useRouter();
@@ -11,89 +19,93 @@ export default function LiveDraftStartPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleStartLiveDraft = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
     setIsProcessing(true);
     setError(null);
     try {
-      const response = await axios.post('http://localhost:8000/draft/helper/start', {
-        pick_slot: parseInt(pickSlot),
-        draft_id: draftId.trim(),
-      });
-      const { session_id } = response.data;
-      router.push(`/draft/helper/${session_id}`);
+      const sessionId = await startLiveDraft(draftId.trim(), Number.parseInt(pickSlot, 10));
+      router.push(`/draft/helper/${sessionId}`);
     } catch (err) {
-      console.error('Error starting live draft:', err);
-      // The backend returns 400 with an "error" key when Sleeper rejects the id.
-      const detail = axios.isAxiosError(err) ? err.response?.data?.error : null;
-      setError(detail ?? 'Failed to start live draft. Check that the Sleeper draft ID is correct.');
+      setError(
+        errorMessage(err, 'Could not start the live draft. Check that the Sleeper draft ID is right.'),
+      );
       setIsProcessing(false);
     }
   };
 
   return (
-    <div style={{ fontFamily: 'sans-serif', maxWidth: '750px', margin: '50px auto', padding: '20px', border: '1px solid #ccc', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
-      <h1 style={{ textAlign: 'center', color: '#333' }}>Live Draft Helper</h1>
-
-      {isProcessing && (
-        <div style={{ textAlign: 'center', marginTop: '20px', fontSize: '1.2em', color: '#1c872b' }}>
-          Connecting to Sleeper and building the big board, please wait...
-        </div>
-      )}
+    <main className="mx-auto min-h-screen max-w-2xl px-5 py-16 sm:py-24">
+      <h1 className="font-display text-4xl font-bold uppercase tracking-[0.14em] text-chalk sm:text-5xl">
+        Live draft
+      </h1>
+      <p className="mt-4 max-w-lg text-sm leading-relaxed text-dim">
+        Ground Game follows the draft in Sleeper and keeps the board in step with
+        it. You still make your picks in Sleeper — this tells you which one to make.
+      </p>
 
       {error && (
-        <div style={{ textAlign: 'center', marginTop: '20px', color: 'red' }}>{error}</div>
+        <p role="alert" className="mt-8 border border-line bg-deck px-3 py-2 text-sm text-chalk">
+          <span className="hazard-severe mr-2 inline-block h-3 w-3 translate-y-0.5" />
+          {error}
+        </p>
       )}
 
-      <form onSubmit={handleStartLiveDraft} style={{ marginTop: '30px', padding: '20px', border: '1px solid #eee', borderRadius: '8px', backgroundColor: '#f9f9f9' }}>
-        <div style={{ marginBottom: '15px' }}>
-          <label htmlFor="draftId" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold', color: '#333' }}>Sleeper Draft ID:</label>
+      <form onSubmit={handleSubmit} className="mt-10 border border-line bg-deck p-5">
+        <Field
+          label="Sleeper draft ID"
+          htmlFor="draftId"
+          hint={
+            <>
+              The last part of the draft URL: sleeper.com/draft/nfl/
+              <span className="text-chalk">&lt;draft id&gt;</span>
+            </>
+          }
+        >
           <input
-            type="text"
             id="draftId"
-            value={draftId}
-            onChange={(e) => setDraftId(e.target.value)}
+            type="text"
             required
-            placeholder="e.g. 1234567890123456789"
-            style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px', color: '#333' }}
+            inputMode="numeric"
+            placeholder="1234567890123456789"
+            value={draftId}
+            onChange={(event) => setDraftId(event.target.value)}
             disabled={isProcessing}
+            className={`${controlClass} tabular`}
           />
-          <p style={{ fontSize: '0.85em', color: '#666', marginTop: '5px' }}>
-            Found in your Sleeper draft URL: sleeper.com/draft/nfl/<strong>&lt;draft id&gt;</strong>
-          </p>
-        </div>
-        <div style={{ marginBottom: '15px' }}>
-          <label htmlFor="pickSlot" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold', color: '#333' }}>Your Pick Slot (1-based):</label>
+        </Field>
+
+        <Field
+          label="Your pick slot"
+          htmlFor="pickSlot"
+          hint="Everything else — teams, rounds, scoring, order — is read from the Sleeper draft."
+        >
           <input
-            type="number"
             id="pickSlot"
-            value={pickSlot}
-            onChange={(e) => setPickSlot(e.target.value)}
+            type="number"
             min="1"
             required
-            style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px', color: '#333' }}
+            value={pickSlot}
+            onChange={(event) => setPickSlot(event.target.value)}
             disabled={isProcessing}
+            className={controlClass}
           />
+        </Field>
+
+        <div className="mt-3 space-y-2">
+          <button type="submit" disabled={isProcessing} className={primaryButtonClass}>
+            {isProcessing ? 'Connecting to Sleeper' : 'Start live draft'}
+          </button>
+          <button
+            type="button"
+            onClick={() => router.push('/draft')}
+            disabled={isProcessing}
+            className={quietButtonClass}
+          >
+            Back
+          </button>
         </div>
-        <p style={{ fontSize: '0.85em', color: '#666', marginBottom: '15px' }}>
-          Team count, rounds, scoring format and draft order are read from the Sleeper draft itself.
-        </p>
-        <button
-          type="submit"
-          style={{ width: '100%', padding: '10px', fontSize: '16px', backgroundColor: '#1c872b', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
-          disabled={isProcessing}
-        >
-          Start Live Draft
-        </button>
-        <button
-          type="button"
-          onClick={() => router.push('/draft')}
-          style={{ width: '100%', padding: '10px', fontSize: '16px', backgroundColor: '#ccc', color: '#333', border: 'none', borderRadius: '5px', cursor: 'pointer', marginTop: '10px' }}
-          disabled={isProcessing}
-        >
-          Back
-        </button>
       </form>
-    </div>
+    </main>
   );
 }

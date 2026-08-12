@@ -9,7 +9,7 @@ from backend.services.vbd_service import create_vbd_big_board, calculate_vona_bo
 from backend.services.draft_service import get_user_picks
 from backend.services.simulation_service import simulate_cpu_pick, simulate_user_auto_pick
 from backend.services import sleeper_service, data_service
-from backend.utils import normalize_name, normalize_scoring_format
+from backend.utils import normalize_name, normalize_scoring_format, points_column
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -90,6 +90,19 @@ class DraftManagerService:
         return teams_list[index] if 0 <= index < len(teams_list) else None
 
     @classmethod
+    def _is_complete(cls, session_state: Dict[str, Any]) -> bool:
+        """
+        Whether every pick in the draft has been made.
+
+        Only live mode used to check this, against `len(picks_order)` -- which is
+        the same number, since picks_order is built round by round. Simulation had
+        no bound at all, so "Simulate next pick" kept drafting past the final round
+        until the player pool ran dry, hundreds of picks later.
+        """
+        draft_obj: Draft = session_state["draft_obj"]
+        return session_state["current_pick_num"] >= draft_obj.rounds * draft_obj.teams
+
+    @classmethod
     def _calculate_and_store_vona(cls, session_state: Dict[str, Any]):
         draft_obj: Draft = session_state["draft_obj"]
         teams_list: List[Team] = session_state["teams_list"]
@@ -103,8 +116,10 @@ class DraftManagerService:
         vona_results = {}
         available_players = draft_obj.get_available_players().copy()
 
-        if available_players.empty:
+        # Nothing left to value: no board, or no pick of yours left to value it for.
+        if available_players.empty or cls._is_complete(session_state):
             session_state["vona_data"] = vona_results
+            session_state["vona_computed_for"] = cls._vona_state_key(session_state)
             return
 
         # Determine picks to simulate for VONA
@@ -221,8 +236,12 @@ class DraftManagerService:
             player_data = data_service.load_player_data()[['normalized_name', 'sleeper_id']] # Changed from load_adp_data to load_player_data
             big_board = pd.merge(big_board, player_data, on='normalized_name', how='left')
 
-        draft_obj = Draft(big_board, draft_format, draft_teams, draft_rounds, order=draft_order)
-        teams_list = [Team() for _ in range(draft_teams)]
+        # The bench is sized from the round count. Left at the module default, a
+        # 20-round draft had two picks with no slot to sit in and a 10-round draft
+        # showed eight bench rows nobody could ever fill.
+        slots = config.roster_slots(draft_rounds)
+        draft_obj = Draft(big_board, draft_format, draft_teams, draft_rounds, roster=slots, order=draft_order)
+        teams_list = [Team(slots) for _ in range(draft_teams)]
 
         # Store the draft state
         session_state = {
@@ -276,33 +295,38 @@ class DraftManagerService:
 
         is_user_turn = False
         on_clock_team_info = None
-        
-        if draft_id:
-            # Live mode logic
-            if current_pick_num >= len(picks_order):
-                return {"message": "Draft appears to be complete.", "status": "completed"}
-            
-            next_pick_slot = picks_order[current_pick_num]
-            on_clock_roster_id = slot_to_roster_id.get(str(next_pick_slot))
-            
-            if on_clock_roster_id == user_roster_id:
-                is_user_turn = True
-                on_clock_team_info = {"type": "user", "roster_id": user_roster_id}
+
+        # A finished draft still returns the whole payload -- the board it ended on
+        # and, more to the point, the roster you ended up with. Live mode used to
+        # bail out with a bare status here, which left the room with no
+        # `on_clock_team` to render and no roster to show for the draft you just did.
+        is_complete = cls._is_complete(session_state)
+
+        # Nobody is on the clock once the draft is over, in either mode.
+        if not is_complete:
+            if draft_id:
+                # Live mode logic
+                next_pick_slot = picks_order[current_pick_num]
+                on_clock_roster_id = slot_to_roster_id.get(str(next_pick_slot))
+
+                if on_clock_roster_id == user_roster_id:
+                    is_user_turn = True
+                    on_clock_team_info = {"type": "user", "roster_id": user_roster_id}
+                else:
+                    on_clock_team_info = {"type": "cpu", "roster_id": on_clock_roster_id}
             else:
-                on_clock_team_info = {"type": "cpu", "roster_id": on_clock_roster_id}
-        else:
-            # Simulation mode logic
-            current_round = (current_pick_num) // draft_obj.teams + 1
-            if draft_obj.order == 'snake' and current_round % 2 == 0:
-                team_index = draft_obj.teams - ((current_pick_num) % draft_obj.teams) - 1
-            else:
-                team_index = (current_pick_num) % draft_obj.teams
-            
-            if (current_pick_num + 1) in user_picks_simulation: # +1 because current_pick_num is 0-indexed
-                is_user_turn = True
-                on_clock_team_info = {"type": "user", "team_index": team_index}
-            else:
-                on_clock_team_info = {"type": "cpu", "team_index": team_index}
+                # Simulation mode logic
+                current_round = (current_pick_num) // draft_obj.teams + 1
+                if draft_obj.order == 'snake' and current_round % 2 == 0:
+                    team_index = draft_obj.teams - ((current_pick_num) % draft_obj.teams) - 1
+                else:
+                    team_index = (current_pick_num) % draft_obj.teams
+
+                if (current_pick_num + 1) in user_picks_simulation: # +1 because current_pick_num is 0-indexed
+                    is_user_turn = True
+                    on_clock_team_info = {"type": "user", "team_index": team_index}
+                else:
+                    on_clock_team_info = {"type": "cpu", "team_index": team_index}
 
         # Recalculate VONA if it's the user's turn, but only if the board moved --
         # this endpoint is hit on every filter change and every live-draft poll.
@@ -325,6 +349,19 @@ class DraftManagerService:
             available_players['display_name'].map(session_state["vona_data"]).fillna(0.0)
         )
 
+        # The season projection, under a name the frontend can rely on. The column
+        # it actually lives in is format-specific -- fantasy_points_half_ppr and so
+        # on -- and the scoring format is not something the room is told.
+        #
+        # Copied rather than renamed: VORP is derived from this column and the CPU
+        # simulation reads it off the same board by its real name.
+        proj_column = points_column(draft_obj.format)
+        available_players['PTS'] = (
+            available_players[proj_column]
+            if proj_column in available_players.columns
+            else float('nan')
+        )
+
         # Apply sorting
         if sort_by:
             ascending = True
@@ -334,6 +371,8 @@ class DraftManagerService:
                 ascending = True # Lower ADP is better
             elif sort_by.upper() == 'VONA':
                 ascending = False # Higher VONA is better
+            elif sort_by.upper() == 'PTS':
+                ascending = False # Higher projection is better
 
             if sort_by.upper() in available_players.columns:
                 available_players = available_players.sort_values(by=sort_by.upper(), ascending=ascending)
@@ -351,17 +390,23 @@ class DraftManagerService:
 
         return {
             "session_id": session_id,
-            "current_pick_num": current_pick_num + 1, # Display as 1-indexed
+            # 1-indexed for display, but clamped: once the last pick is in,
+            # current_pick_num equals the total, and +1 reads as "pick 241 / 240".
+            "current_pick_num": min(current_pick_num + 1, draft_obj.rounds * draft_obj.teams),
             "is_user_turn": is_user_turn,
             "on_clock_team": on_clock_team_info,
             "available_players": available_players_display,
             "drafted_players_count": len(draft_obj.drafted_players),
             "total_picks": draft_obj.rounds * draft_obj.teams,
+            # League size and length, so the rail can show a round number without
+            # guessing -- total_picks is their product and recovers neither alone.
+            "teams": draft_obj.teams,
+            "rounds": draft_obj.rounds,
             "user_roster": user_roster,
             # {week: [player, ...]} for weeks that would sideline two or more of the
             # user's players at once.
             "bye_conflicts": bye_conflicts,
-            "status": "in_progress"
+            "status": "completed" if is_complete else "in_progress"
         }
 
     @classmethod
@@ -370,12 +415,15 @@ class DraftManagerService:
         if not session_state:
             return {"error": "Draft session not found."}
 
+        if cls._is_complete(session_state):
+            return {"error": "The draft is complete.", "status": "completed"}
+
         draft_obj: Draft = session_state["draft_obj"]
         teams_list: List[Team] = session_state["teams_list"]
         current_pick_num = session_state["current_pick_num"]
         draft_id = session_state["draft_id"]
         user_picks_simulation = session_state["user_picks_simulation"]
-        
+
         # Determine current team index based on mode
         team_index = -1
         if draft_id:
@@ -429,6 +477,11 @@ class DraftManagerService:
 
         if draft_id:
             return {"error": "CPU picks are only for simulation mode."}
+
+        # Without this the button kept working after the final round, cycling the
+        # team index round the board and draining the player pool.
+        if cls._is_complete(session_state):
+            return {"error": "The draft is complete.", "status": "completed"}
 
         current_round = (current_pick_num) // draft_obj.teams + 1
         if draft_obj.order == 'snake' and current_round % 2 == 0:
@@ -587,6 +640,9 @@ class DraftManagerService:
         session_state = cls._active_draft_sessions.get(session_id)
         if not session_state:
             return {"error": "Draft session not found."}
+
+        if cls._is_complete(session_state):
+            return {"error": "The draft is complete.", "status": "completed"}
 
         draft_obj: Draft = session_state["draft_obj"]
         teams_list: List[Team] = session_state["teams_list"]
