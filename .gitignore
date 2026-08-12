@@ -14,8 +14,11 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# Anchored to the repo root. Unanchored, these are Python packaging output
+# *and* frontend/src/lib -- which silently excluded every module the draft room
+# imports (api, types, positions, tiers, format) from version control.
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -188,5 +191,8 @@ cython_debug/
 
 .vscode/
 data/
+
+# Cygwin/MSYS crash dumps, which land in whatever directory the shell died in.
+*.stackdump
 
 CLAUDE.md

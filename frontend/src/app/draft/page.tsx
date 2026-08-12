@@ -2,151 +2,191 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import axios from 'axios'; // Import axios
+
+import { errorMessage, startSimulation } from '@/lib/api';
+
+import {
+  Field,
+  controlClass,
+  primaryButtonClass,
+  quietButtonClass,
+} from './_components/FormControls';
 
 export default function StartPage() {
   const router = useRouter();
-  const [mode, setMode] = useState<null | 'simulation'>(null);
-  const [isProcessing, setIsProcessing] = useState(false); // New state for processing indicator
+  const [showForm, setShowForm] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // State for Simulation
-  const [simPickSlot, setSimPickSlot] = useState('1');
-  const [simTeams, setSimTeams] = useState('12');
-  const [simRounds, setSimRounds] = useState('15');
-  const [simFormat, setSimFormat] = useState('STD');
-  const [simOrder, setSimOrder] = useState('snake');
+  const [pickSlot, setPickSlot] = useState('1');
+  const [teams, setTeams] = useState('12');
+  const [rounds, setRounds] = useState('15');
+  const [format, setFormat] = useState('PPR');
+  const [order, setOrder] = useState('snake');
 
-  const handleStartSimulation = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsProcessing(true); // Set processing to true
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setIsProcessing(true);
+    setError(null);
     try {
-      const response = await axios.post('http://localhost:8000/draft/simulation/start', {
-        pick_slot: parseInt(simPickSlot),
-        teams: parseInt(simTeams),
-        rounds: parseInt(simRounds),
-        format: simFormat,
-        order: simOrder,
+      const sessionId = await startSimulation({
+        pick_slot: Number.parseInt(pickSlot, 10),
+        teams: Number.parseInt(teams, 10),
+        rounds: Number.parseInt(rounds, 10),
+        format,
+        order,
       });
-      const { session_id } = response.data;
-      router.push(`/draft/simulation/${session_id}`);
-    } catch (error) {
-      console.error('Error starting simulation:', error);
-      alert('Failed to start simulation. Please check the console for details.');
-    } finally {
-      setIsProcessing(false); // Set processing to false
+      router.push(`/draft/simulation/${sessionId}`);
+    } catch (err) {
+      // Replaces an alert(), which stopped the page dead and said nothing useful.
+      setError(errorMessage(err, 'Could not start the draft. Is the backend running?'));
+      setIsProcessing(false);
     }
   };
 
   return (
-    <div style={{ fontFamily: 'sans-serif', maxWidth: '750px', margin: '50px auto', padding: '20px', border: '1px solid #ccc', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
-      <h1 style={{ textAlign: 'center', color: '#333' }}>Ground Game Draft Assistant</h1>
+    <main className="mx-auto min-h-screen max-w-2xl px-5 py-16 sm:py-24">
+      <h1 className="font-display text-5xl font-bold uppercase tracking-[0.14em] text-chalk sm:text-6xl">
+        Ground Game
+      </h1>
+      {/*
+        The thesis, and the one thing this board does that a printed cheat sheet
+        cannot: it plays the rest of the round out before you pick.
+      */}
+      <p className="font-display mt-2 text-xl uppercase tracking-[0.08em] text-dim sm:text-2xl">
+        Know what waiting costs
+      </p>
+      <p className="mt-6 max-w-lg text-sm leading-relaxed text-dim">
+        A value-based draft board. It simulates the rest of the round before your
+        pick, so you can see who will still be on the board when it comes back
+        around — and where the drop-off is if they are not.
+      </p>
 
-      {isProcessing && (
-        <div style={{ textAlign: 'center', marginTop: '20px', fontSize: '1.2em', color: '#0070f3' }}>
-          Starting draft, please wait...
-        </div>
+      {error && (
+        <p role="alert" className="mt-8 border border-line bg-deck px-3 py-2 text-sm text-chalk">
+          <span className="hazard-severe mr-2 inline-block h-3 w-3 translate-y-0.5" />
+          {error}
+        </p>
       )}
 
-      {!mode && (
-        <div style={{ display: 'flex', justifyContent: 'space-around', marginTop: '30px' }}>
+      {!showForm ? (
+        <div className="mt-12 grid gap-3 sm:grid-cols-2">
           <button
-            onClick={() => setMode('simulation')}
-            style={{ padding: '12px 25px', fontSize: '16px', cursor: 'pointer', backgroundColor: '#0070f3', color: 'white', border: 'none', borderRadius: '5px' }}
-            disabled={isProcessing} // Disable while processing
+            type="button"
+            onClick={() => setShowForm(true)}
+            className="group border border-line bg-deck p-5 text-left transition-colors hover:border-chalk"
           >
-            Start Simulation
+            <span className="font-display block text-sm font-semibold uppercase tracking-[0.16em] text-chalk">
+              Mock draft
+            </span>
+            <span className="mt-1.5 block text-xs text-dim">
+              Draft against CPU opponents. You set the league up.
+            </span>
           </button>
+
           <button
+            type="button"
             onClick={() => router.push('/draft/helper')}
-            style={{ padding: '12px 25px', fontSize: '16px', cursor: 'pointer', backgroundColor: '#1c872b', color: 'white', border: 'none', borderRadius: '5px' }}
-            disabled={isProcessing} // Disable while processing
+            className="group border border-line bg-deck p-5 text-left transition-colors hover:border-chalk"
           >
-            Start Live Draft Helper
+            <span className="font-display block text-sm font-semibold uppercase tracking-[0.16em] text-chalk">
+              Live draft
+            </span>
+            <span className="mt-1.5 block text-xs text-dim">
+              Follow a real Sleeper draft and get advice as it runs.
+            </span>
           </button>
         </div>
-      )}
+      ) : (
+        <form onSubmit={handleSubmit} className="mt-12 border border-line bg-deck p-5">
+          <h2 className="font-display mb-5 text-sm font-semibold uppercase tracking-[0.16em] text-dim">
+            League setup
+          </h2>
 
-      {mode === 'simulation' && (
-        <form onSubmit={handleStartSimulation} style={{ marginTop: '30px', padding: '20px', border: '1px solid #eee', borderRadius: '8px', backgroundColor: '#f9f9f9' }}>
-          <h2 style={{ textAlign: 'center', color: '#222' }}>Draft Simulation</h2>
-          <div style={{ marginBottom: '15px' }}>
-            <label htmlFor="simPickSlot" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold', color: '#333' }}>Your Pick Slot (1-based):</label>
-            <input
-              type="number"
-              id="simPickSlot"
-              value={simPickSlot}
-              onChange={(e) => setSimPickSlot(e.target.value)}
-              min="1"
-              required
-              style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
-              disabled={isProcessing} // Disable while processing
-            />
+          <div className="grid gap-x-4 sm:grid-cols-2">
+            <Field label="Your pick slot" htmlFor="pickSlot">
+              <input
+                id="pickSlot"
+                type="number"
+                min="1"
+                required
+                value={pickSlot}
+                onChange={(event) => setPickSlot(event.target.value)}
+                disabled={isProcessing}
+                className={controlClass}
+              />
+            </Field>
+
+            <Field label="Teams" htmlFor="teams">
+              <input
+                id="teams"
+                type="number"
+                min="2"
+                required
+                value={teams}
+                onChange={(event) => setTeams(event.target.value)}
+                disabled={isProcessing}
+                className={controlClass}
+              />
+            </Field>
+
+            <Field label="Rounds" htmlFor="rounds">
+              <input
+                id="rounds"
+                type="number"
+                min="1"
+                required
+                value={rounds}
+                onChange={(event) => setRounds(event.target.value)}
+                disabled={isProcessing}
+                className={controlClass}
+              />
+            </Field>
+
+            <Field label="Scoring" htmlFor="format">
+              <select
+                id="format"
+                value={format}
+                onChange={(event) => setFormat(event.target.value)}
+                disabled={isProcessing}
+                className={controlClass}
+              >
+                {/* These values are the canonical forms the backend accepts verbatim. */}
+                <option value="STD">Standard</option>
+                <option value="HalfPPR">Half-PPR</option>
+                <option value="PPR">PPR</option>
+              </select>
+            </Field>
+
+            <Field label="Draft order" htmlFor="order">
+              <select
+                id="order"
+                value={order}
+                onChange={(event) => setOrder(event.target.value)}
+                disabled={isProcessing}
+                className={controlClass}
+              >
+                <option value="snake">Snake</option>
+                <option value="normal">Straight</option>
+              </select>
+            </Field>
           </div>
-          <div style={{ marginBottom: '15px' }}>
-            <label htmlFor="simTeams" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold', color: '#333' }}>Number of Teams:</label>
-            <input
-              type="number"
-              id="simTeams"
-              value={simTeams}
-              onChange={(e) => setSimTeams(e.target.value)}
-              min="2"
-              required
-              style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
-              disabled={isProcessing} // Disable while processing
-            />
-          </div>
-          <div style={{ marginBottom: '15px' }}>
-            <label htmlFor="simRounds" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold', color: '#333' }}>Number of Rounds:</label>
-            <input
-              type="number"
-              id="simRounds"
-              value={simRounds}
-              onChange={(e) => setSimRounds(e.target.value)}
-              min="1"
-              required
-              style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
-              disabled={isProcessing} // Disable while processing
-            />
-          </div>
-          <div style={{ marginBottom: '15px' }}>
-            <label htmlFor="simFormat" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold', color: '#333' }}>Scoring Format:</label>
-            <select
-              id="simFormat"
-              value={simFormat}
-              onChange={(e) => setSimFormat(e.target.value)}
-              style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
-              disabled={isProcessing} // Disable while processing
+
+          <div className="mt-3 space-y-2">
+            <button type="submit" disabled={isProcessing} className={primaryButtonClass}>
+              {isProcessing ? 'Building the board' : 'Start mock draft'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowForm(false)}
+              disabled={isProcessing}
+              className={quietButtonClass}
             >
-              <option value="STD">Standard</option>
-              <option value="HalfPPR">Half-PPR</option>
-              <option value="PPR">PPR</option>
-            </select>
+              Back
+            </button>
           </div>
-          <div style={{ marginBottom: '15px' }}>
-            <label htmlFor="simOrder" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold', color: '#333' }}>Draft Order:</label>
-            <select
-              id="simOrder"
-              value={simOrder}
-              onChange={(e) => setSimOrder(e.target.value)}
-              style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px' }}
-              disabled={isProcessing} // Disable while processing
-            >
-              <option value="snake">Snake</option>
-              <option value="normal">Normal</option>
-            </select>
-          </div>
-          <button type="submit" style={{ width: '100%', padding: '10px', fontSize: '16px', backgroundColor: '#0070f3', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
-            disabled={isProcessing} // Disable while processing
-          >
-            Start Simulation
-          </button>
-          <button type="button" onClick={() => setMode(null)} style={{ width: '100%', padding: '10px', fontSize: '16px', backgroundColor: '#ccc', color: '#333', border: 'none', borderRadius: '5px', cursor: 'pointer', marginTop: '10px' }}
-            disabled={isProcessing} // Disable while processing
-          >
-            Back
-          </button>
         </form>
       )}
-    </div>
+    </main>
   );
 }
