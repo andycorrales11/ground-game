@@ -2,18 +2,76 @@ import pandas as pd
 import numpy as np
 from .draft import Team
 
+# Kickers and defenses are the last two picks of a normal draft. Their ADP sits
+# around 120-200, which by the middle rounds is better than anything left on the
+# board, and they carry real VORP now -- so without an explicit brake the CPU
+# takes a defense in round 8, well before its bench is filled.
+LATE_ROUND_POSITIONS = ('K', 'DEF')
+
+# Rounds at the end of the draft where an unfilled K/DEF slot becomes the priority.
+LATE_ROUND_GRACE = 2
+LATE_ROUND_BONUS = 0.15
+
+# Multiplier on the (lower-is-better) score before then. This has to be large: a
+# defense is usually the best ADP left on the board by the middle rounds, so its
+# raw score is near 1.0, and the CPU samples from the top 10. A x12 penalty only
+# moved it to about rank 8 -- still inside the sampling window, which is how
+# defenses were still going in round 10 of 15.
+LATE_ROUND_PENALTY = 50.0
+
+# The exception: within ELITE_WINDOW rounds of the end, the single best remaining
+# kicker and defense are only lightly penalised. This is the elite defense that
+# comes off the board a round or two early.
+ELITE_WINDOW = 4
+ELITE_PENALTY = 8.0
+
+# Roster has one K slot and one DEF slot, so a second of either is a wasted pick.
+DUPLICATE_PENALTY = 100.0
+
+
+def _apply_late_round_penalty(players: pd.DataFrame, score_column: str,
+                              team: Team, rounds_remaining: int) -> None:
+    """
+    Keeps kickers and defenses on the board until the bench is filled, then makes
+    sure the slot actually gets filled before the draft ends.
+
+    Modifies `players` in place. Scores are lower-is-better, so a multiplier above
+    1.0 is a penalty and below 1.0 is a bonus.
+
+    Three regimes per position:
+      already rostered  -- effectively unpickable, there is only one slot
+      final few rounds  -- strongly preferred, so teams do not finish without one
+      everything before -- heavily penalised, except the best one left once the
+                           draft is close to the end
+    """
+    for pos in LATE_ROUND_POSITIONS:
+        at_pos = players['pos'] == pos
+        if not at_pos.any():
+            continue
+
+        if team.count_players_at_position(pos) >= 1:
+            players.loc[at_pos, score_column] *= DUPLICATE_PENALTY
+        elif rounds_remaining <= LATE_ROUND_GRACE:
+            players.loc[at_pos, score_column] *= LATE_ROUND_BONUS
+        else:
+            players.loc[at_pos, score_column] *= LATE_ROUND_PENALTY
+            if rounds_remaining <= ELITE_WINDOW:
+                ranked = players.loc[at_pos & players['VORP'].notna(), 'VORP']
+                if not ranked.empty:
+                    # Swap the flat penalty for the lighter one on the best available.
+                    players.loc[ranked.idxmax(), score_column] *= ELITE_PENALTY / LATE_ROUND_PENALTY
+
+
 def calculate_positional_scarcity(players: pd.DataFrame) -> dict:
     """
     Calculates the VORP drop-off for each position to determine scarcity.
     """
     scarcity = {}
     for pos in ['QB', 'RB', 'WR', 'TE']:
-        pos_players = players[players['position'] == pos].sort_values(by='VORP', ascending=False)
-        if len(pos_players) > 1:
-            # Scarcity is the VORP difference between the best and second-best player
-            scarcity[pos] = pos_players.iloc[0]['VORP'] - pos_players.iloc[1]['VORP']
-        else:
-            scarcity[pos] = 0
+        # Unprojected players carry NaN VORP; drop them rather than let one land on
+        # iloc[1] and make the whole gap NaN, which then loses every max() it enters.
+        ranked = players.loc[players['pos'] == pos, 'VORP'].dropna().sort_values(ascending=False)
+        scarcity[pos] = float(ranked.iloc[0] - ranked.iloc[1]) if len(ranked) > 1 else 0.0
     return scarcity
 
 def calculate_draft_score(players: pd.DataFrame) -> pd.DataFrame:
@@ -36,7 +94,7 @@ def calculate_draft_score(players: pd.DataFrame) -> pd.DataFrame:
         
     return players
 
-def simulate_cpu_pick(available_players: pd.DataFrame, team: Team, full_player_df: pd.DataFrame) -> str:
+def simulate_cpu_pick(available_players: pd.DataFrame, team: Team, total_rounds: int) -> str:
     """
     Simulates a CPU pick using a balanced approach of Best Player Available (BPA),
     positional need, and positional scarcity.
@@ -46,20 +104,24 @@ def simulate_cpu_pick(available_players: pd.DataFrame, team: Team, full_player_d
 
     # 2. Apply penalties and bonuses
     # QB Penalty: If team has 2 QBs, heavily penalize drafting another
-    if team.count_players_at_position('QB', full_player_df) >= 2:
-        players.loc[players['position'] == 'QB', 'draft_score'] *= 5.0 # Heavy penalty
+    if team.count_players_at_position('QB') >= 2:
+        players.loc[players['pos'] == 'QB', 'draft_score'] *= 5.0 # Heavy penalty
 
     # Starter Bonus: Prioritize filling starting spots
     starting_needs = team.get_starting_positional_needs()
     if starting_needs:
-        needed_indices = players[players['position'].isin(starting_needs)].index
+        needed_indices = players[players['pos'].isin(starting_needs)].index
         players.loc[needed_indices, 'draft_score'] *= 0.70 # Significant bonus
+
+    # K and DEF are starting slots too, so the bonus above actively pulls them
+    # forward. Hold them back until the bench is nearly full.
+    _apply_late_round_penalty(players, 'draft_score', team, total_rounds - team.picks_made)
 
     # Scarcity Bonus
     scarcity = calculate_positional_scarcity(players)
     if scarcity:
         scarcest_position = max(scarcity, key=scarcity.get)
-        top_player_at_scarcest = players[players['position'] == scarcest_position].sort_values(by='VORP', ascending=False).head(1)
+        top_player_at_scarcest = players[players['pos'] == scarcest_position].sort_values(by='ADP', ascending=False).head(1)
         if not top_player_at_scarcest.empty:
             player_index = top_player_at_scarcest.index[0]
             players.loc[player_index, 'draft_score'] -= 10
@@ -84,7 +146,7 @@ def simulate_cpu_pick(available_players: pd.DataFrame, team: Team, full_player_d
 
     return np.random.choice(choices, p=probabilities)
 
-def simulate_user_auto_pick(available_players: pd.DataFrame, team: Team, full_player_df: pd.DataFrame) -> str:
+def simulate_user_auto_pick(available_players: pd.DataFrame, team: Team, total_rounds: int) -> str:
     """
     Simulates a user's auto-pick using a VONA-enhanced hybrid score.
     """
@@ -104,20 +166,23 @@ def simulate_user_auto_pick(available_players: pd.DataFrame, team: Team, full_pl
 
     # 3. Apply penalties and bonuses
     # QB Penalty
-    if team.count_players_at_position('QB', full_player_df) >= 2:
-        players.loc[players['position'] == 'QB', 'auto_pick_score'] *= 5.0
+    if team.count_players_at_position('QB') >= 2:
+        players.loc[players['pos'] == 'QB', 'auto_pick_score'] *= 5.0
 
     # Starter Bonus
     starting_needs = team.get_starting_positional_needs()
     if starting_needs:
-        needed_indices = players[players['position'].isin(starting_needs)].index
+        needed_indices = players[players['pos'].isin(starting_needs)].index
         players.loc[needed_indices, 'auto_pick_score'] *= 0.75
+
+    _apply_late_round_penalty(players, 'auto_pick_score', team,
+                              total_rounds - team.picks_made)
 
     # Scarcity Bonus
     scarcity = calculate_positional_scarcity(players)
     if scarcity:
         scarcest_position = max(scarcity, key=scarcity.get)
-        top_player_at_scarcest = players[players['position'] == scarcest_position].sort_values(by='VORP', ascending=False).head(1)
+        top_player_at_scarcest = players[players['pos'] == scarcest_position].sort_values(by='VORP', ascending=False).head(1)
         if not top_player_at_scarcest.empty:
             player_index = top_player_at_scarcest.index[0]
             players.loc[player_index, 'auto_pick_score'] -= 5

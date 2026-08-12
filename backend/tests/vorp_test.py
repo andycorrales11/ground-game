@@ -11,8 +11,9 @@ def main() -> None:
         big_board_df = create_vbd_big_board(format=format_type)
 
         if big_board_df is not None and not big_board_df.empty:
-            # Filter for Wide Receivers and print relevant columns
-            wr_df = big_board_df[big_board_df['position'] == 'WR'].copy()
+            # Filter for Wide Receivers and print relevant columns.
+            # The column is 'pos'; the database has never had a 'position' column.
+            wr_df = big_board_df[big_board_df['pos'] == 'WR'].copy()
             wr_df.sort_values(by='VORP', ascending=False, inplace=True)
             print(wr_df.head(25)[['display_name', 'VORP', 'ADP']])
         else:

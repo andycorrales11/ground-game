@@ -28,7 +28,7 @@ def get_draft_settings(draft_id: str) -> dict | None:
             'rounds': data.get('settings', {}).get('rounds', 15),
             'teams': data.get('settings', {}).get('teams', 12),
             'order': data.get('type', 'snake'),
-            'format': data.get('metadata', {}).get('scoring_type', 'std').upper(),
+            'format': utils.normalize_scoring_format(data.get('metadata', {}).get('scoring_type')),
             'slot_to_roster_id': data.get('slot_to_roster_id', {})
         }
         logging.info(f"Successfully fetched draft settings: {settings}")
