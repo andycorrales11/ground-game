@@ -35,7 +35,13 @@ const METRICS = [
     label: 'VORP',
     hint: 'Projected points above the replacement-level player at this position.',
   },
-  { key: 'VONA', label: 'VONA', hint: 'What waiting until your next pick costs you.' },
+  {
+    key: 'VONA',
+    label: 'VONA',
+    hint:
+      'What waiting until your next pick costs you: how likely he is to be gone, ' +
+      'times how far he is above the next man down at his position.',
+  },
 ] as const;
 
 interface Props {
@@ -43,15 +49,6 @@ interface Props {
   tiers: Map<string, TierInfo>;
   /** False when tiers would not read down the page in order. See tiersAreInReadingOrder. */
   showCliffs: boolean;
-  /**
-   * Whether VONA means anything yet.
-   *
-   * It only does on your turn. Off-turn the backend has no next turn to
-   * simulate towards, so it leaves picks_to_simulate at zero and every
-   * candidate is compared against itself -- a board of exact zeroes. Printing
-   * those would say waiting costs nothing, which is the opposite of true.
-   */
-  vonaComputed: boolean;
   sortBy: string;
   selectedName: string | null;
   onSelect: (normalizedName: string) => void;
@@ -62,7 +59,6 @@ export default function PlayerBoard({
   players,
   tiers,
   showCliffs,
-  vonaComputed,
   sortBy,
   selectedName,
   onSelect,
@@ -124,14 +120,10 @@ export default function PlayerBoard({
                   than competing for the same glance.
                 */
                 aria-sort={sortBy === metric.key ? 'descending' : 'none'}
-                title={
-                  metric.key === 'VONA' && !vonaComputed
-                    ? 'Value over next available is worked out when it is your pick.'
-                    : metric.hint
-                }
+                title={metric.hint}
                 className={`font-display sticky top-0 z-10 border-b border-line bg-deck px-2 py-2 text-right text-[11px] font-semibold uppercase tracking-[0.16em] ${
                   sortBy === metric.key ? 'text-chalk' : 'text-dim'
-                } ${metric.key === 'VONA' && !vonaComputed ? 'opacity-50' : ''}`}
+                }`}
               >
                 {metric.label}
               </th>
@@ -189,11 +181,19 @@ export default function PlayerBoard({
                       className={`tabular py-1.5 pr-2 text-right text-xs ${
                         sortBy === metric.key ? 'text-chalk' : 'text-dim'
                       }`}
+                      /*
+                        The risk behind the number. A VONA of 12 means something
+                        different at a 40% chance of losing him than at 100%, and
+                        the cell has room for one figure, not two.
+                      */
+                      title={
+                        metric.key === 'VONA' && typeof player.GONE === 'number'
+                          ? `${Math.round(player.GONE * 100)}% chance he is gone by your next pick`
+                          : undefined
+                      }
                     >
                       {metric.key === 'VONA'
-                        ? vonaComputed
-                          ? signed(player.VONA)
-                          : '—'
+                        ? signed(player.VONA)
                         : num(player[metric.key] as number | null)}
                     </td>
                   ))}

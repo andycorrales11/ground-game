@@ -415,7 +415,6 @@ export default function DraftRoom({ mode }: Props) {
             players={visible}
             tiers={tiers}
             showCliffs={showCliffs}
-            vonaComputed={isUserTurn}
             sortBy={sortBy}
             selectedName={selectedName}
             onSelect={setSelectedName}

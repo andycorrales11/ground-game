@@ -25,8 +25,28 @@ export interface Player {
    * projection at all -- it does not mean replacement level, which is 0.
    */
   VORP: number | null;
-  /** Value over next available: what taking someone else at this position costs. */
+  /**
+   * What waiting costs: the chance he is gone before your next pick, times how
+   * far he is above the next man down at his position.
+   *
+   * Both halves come from the same forward simulations, which run from whatever
+   * pick is on the clock through to your next turn. Off your turn that span is
+   * longer, so the column reads as "who will still be here when I pick" -- it is
+   * live the whole draft, not only while you are on the clock.
+   */
   VONA: number | null;
+  /**
+   * The chance, 0-1, that he is gone before your next pick.
+   *
+   * The other half of VONA, on its own. A player can be worth far more than the
+   * next man down and still be near-certain to last, which is precisely when you
+   * should be taking somebody else. Resolution is coarse -- it comes from five
+   * simulations, so it moves in steps of 0.2.
+   *
+   * Optional, on the same rule as DraftState.teams: a backend from before this
+   * existed does not send it, and the tooltip is omitted rather than guessed at.
+   */
+  GONE?: number | null;
   // The big board also carries format-specific columns (e.g. fantasy_points_ppr).
   [key: string]: string | number | null | undefined;
 }

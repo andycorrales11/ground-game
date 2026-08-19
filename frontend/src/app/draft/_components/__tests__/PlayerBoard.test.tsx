@@ -42,7 +42,6 @@ function renderBoard(overrides: Partial<React.ComponentProps<typeof PlayerBoard>
     players: PLAYERS,
     tiers: TIERS,
     showCliffs: true,
-    vonaComputed: true,
     sortBy: 'VORP',
     selectedName: null,
     onSelect: jest.fn(),
@@ -121,14 +120,13 @@ describe('PlayerBoard', () => {
     expect(screen.getAllByText('—')).toHaveLength(4);
   });
 
-  it('withholds VONA until it is the user pick that makes it mean something', () => {
-    renderBoard({ vonaComputed: false });
+  it('prints VONA whoever is on the clock', () => {
+    renderBoard();
 
-    // Off-turn the backend compares every candidate against itself, so the
-    // column is a wall of exact zeroes. Printing "+0.0" would read as "waiting
-    // costs you nothing" -- precisely backwards.
-    expect(screen.queryByText('+8.2')).not.toBeInTheDocument();
-    expect(screen.getAllByText('—')).toHaveLength(PLAYERS.length);
+    // VONA is the span between now and your next pick, and that span exists off
+    // your turn too -- it is longer, which is the point. The column used to be
+    // greyed out and dashed for every pick that was not yours.
+    expect(screen.getAllByText('+8.2')).toHaveLength(PLAYERS.length);
   });
 
   it('invites an action when nothing matches the filter', () => {
