@@ -43,12 +43,6 @@ PLAYER_BYE_RE = re.compile(
     r"^(?P<name>.+?)(?:\s+(?P<team>[A-Z]{2,3})\s*\((?P<bye>\d+)\))?$"
 )
 
-# e.g. athletic_qb_projections_halfppr.csv
-PROJ_FILE_RE = re.compile(
-    r"^athletic_(?P<pos>[a-z]+)_projections_(?P<fmt>std|ppr|halfppr)\.csv$",
-    re.IGNORECASE,
-)
-
 DB_COLUMNS = [
     "sleeper_id", "display_name", "normalized_name", "team", "pos", "bye",
     "std_adp", "half_ppr_adp", "ppr_adp",
@@ -265,64 +259,6 @@ def load_adp_data(season: int, adp_dir: Path) -> pd.DataFrame:
     return adp_data
 
 
-def load_projection_data(proj_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Loads the Athletic projection CSVs (tab-separated despite the .csv extension).
-
-    Returns (projections, hints). The hints carry the position encoded in each
-    filename plus the team column, which together are the only position/team source
-    for players who appear in the projections but in none of the ADP files.
-    """
-    by_format: dict[str, list[pd.DataFrame]] = {"std": [], "ppr": [], "half_ppr": []}
-    hints: list[pd.DataFrame] = []
-
-    for path in sorted(proj_dir.glob("*.csv")):
-        match = PROJ_FILE_RE.match(path.name)
-        if not match:
-            print(f"  Warning: unrecognized projection filename, skipping: {path.name}")
-            continue
-
-        fmt = match.group("fmt").lower().replace("halfppr", "half_ppr")
-        file_pos = match.group("pos").upper()
-
-        try:
-            raw = pd.read_csv(path, sep="\t")
-            df = raw[["Player", "FPS"]].rename(columns={"Player": "display_name"})
-        except Exception as e:
-            print(f"  Error processing {path.name}: {e}")
-            continue
-
-        hints.append(pd.DataFrame({
-            "display_name": df["display_name"],
-            "pos_hint": file_pos,
-            "team_hint": raw["TM"] if "TM" in raw.columns else None,
-        }))
-        by_format[fmt].append(df.rename(columns={"FPS": f"{fmt}_proj_pts"}))
-
-    projections = None
-    for fmt, dfs in by_format.items():
-        if not dfs:
-            print(f"  Warning: no {fmt} projection files found in {proj_dir}.")
-            continue
-        frame = pd.concat(dfs, ignore_index=True).groupby("display_name", as_index=False).first()
-        projections = frame if projections is None else pd.merge(
-            projections, frame, on="display_name", how="outer"
-        )
-
-    if projections is None:
-        raise FileNotFoundError(
-            f"No usable projection files found in {proj_dir}. Expected files named like "
-            f"'athletic_rb_projections_ppr.csv'."
-        )
-
-    hint_df = (
-        pd.concat(hints, ignore_index=True).groupby("display_name", as_index=False).first()
-        if hints
-        else pd.DataFrame(columns=["display_name", "pos_hint", "team_hint"])
-    )
-    return projections, hint_df
-
-
 def _merge_sleeper_projections(board: pd.DataFrame, season: int) -> pd.DataFrame:
     """
     Joins Sleeper projections onto the ADP board by Sleeper id.
@@ -349,21 +285,6 @@ def _merge_sleeper_projections(board: pd.DataFrame, season: int) -> pd.DataFrame
     if drafted and matched / drafted < 0.8:
         print("    Warning: under 80% matched -- check that the season and ids line up.")
 
-    return merged
-
-
-def _merge_csv_projections(board: pd.DataFrame) -> pd.DataFrame:
-    """Joins the Athletic projection CSVs onto the ADP board by display name."""
-    projections, hints = load_projection_data(config.PROJECTIONS_DIR)
-
-    merged = pd.merge(board, projections, on="display_name", how="outer")
-    merged = pd.merge(merged, hints, on="display_name", how="left")
-
-    # Projection-only rows have no ADP row to take position and team from, so fall
-    # back to what the projection filenames and TM column implied.
-    merged["pos"] = merged["pos"].fillna(merged["pos_hint"]).replace({"DST": "DEF", "D/ST": "DEF"})
-    merged["team"] = merged["team"].fillna(merged["team_hint"])
-    merged.drop(columns=["pos_hint", "team_hint"], inplace=True)
     return merged
 
 
@@ -501,27 +422,27 @@ def _fill_byes_from_team(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def prepare_data(season: int | None = None, projection_source: str | None = None) -> pd.DataFrame:
+def prepare_data(season: int | None = None) -> pd.DataFrame:
     """
-    Builds the players table from FantasyPros ADP plus a projection source.
+    Builds the players table from FantasyPros ADP plus Sleeper projections.
 
-    Projections come from Sleeper by default, which covers every scoring format in
-    one request and joins on the Sleeper id rather than on a name. Set
-    GG_PROJECTIONS=csv to fall back to the Athletic CSVs instead, which is useful
-    for diffing the two boards against each other.
+    Sleeper covers every scoring format in one request and joins on the Sleeper
+    id rather than on a name, so there is no name matching on this path at all.
+
+    The stored projections are a *fallback* now rather than the board's numbers.
+    Quarterbacks, running backs, receivers and tight ends are reprojected at draft
+    time by backend/services/projection_engine.py, against the league's own
+    scoring; what survives from here is kickers, defenses, and the deep pool the
+    engine does not model.
+
+    (An Athletic-CSV path used to live alongside this one, joining on display
+    name. The projection engine supersedes it and it has been removed.)
     """
     season = season or config.SEASON
-    source = (projection_source or os.getenv("GG_PROJECTIONS", "sleeper")).lower()
-    print(f"Preparing data for the {season} season (projections: {source}).")
+    print(f"Preparing data for the {season} season.")
 
     board = _build_adp_board(season)
-
-    if source == "sleeper":
-        merged = _merge_sleeper_projections(board, season)
-    elif source == "csv":
-        merged = _merge_csv_projections(board)
-    else:
-        raise ValueError(f"Unknown projection source '{source}'. Use 'sleeper' or 'csv'.")
+    merged = _merge_sleeper_projections(board, season)
 
     merged["normalized_name"] = merged["display_name"].apply(normalize_name)
     merged = _canonicalize_teams(merged)

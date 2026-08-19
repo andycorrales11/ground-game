@@ -13,7 +13,6 @@ DATA_DIR = CWD / "data"
 PLAYERS_DIR = DATA_DIR / "sleeper_players"
 STATS_DIR = DATA_DIR / "nfl_stats"
 ADP_DIR = DATA_DIR / "fantasy_pros_adp"
-PROJECTIONS_DIR = DATA_DIR / "projections"
 PLAYER_ADP_DIR = DATA_DIR / "players_adp"
 
 # --- DRAFT SETTINGS ---
