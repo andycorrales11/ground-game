@@ -162,7 +162,7 @@ Three formula asymmetries are load-bearing:
 
 **Unresolved players are stored, not dropped.** 13 workbook players don't match anything on the board. They still go into `projection_players` with a null `sleeper_id`, because share weights are *relative* — dropping them renormalizes their teammates' shares upward and silently changes every projection on that team. `projected_points` drops them only at the very end, after projecting.
 
-Scoring formats are still **columns** for ADP — `std_adp`/`half_ppr_adp`/`ppr_adp` — and always will be: there is no way to derive where the field drafts a player from a scoring table. So a session carries both a `format` (picks the ADP column, seeds the scoring defaults) and a `ScoringSettings` (what actually scores the board). `calculate_vorp` still hard-rejects any format outside `['STD', 'PPR', 'HalfPPR']`.
+Scoring formats are still **columns** for ADP — `std_adp`/`half_ppr_adp`/`ppr_adp`, plus `superflex_adp` — and always will be: there is no way to derive where the field drafts a player from a scoring table. So a session carries both a `format` (picks the ADP column, seeds the scoring defaults) and a `ScoringSettings` (what actually scores the board). `calculate_vorp` still hard-rejects any format outside `['STD', 'PPR', 'HalfPPR']`.
 
 ### League settings
 
@@ -246,6 +246,12 @@ $env:GG_SEASON = "2025"; .\.venv\Scripts\python.exe -m backend.ingest.ingest_to_
 ```
 
 **FantasyPros changes its export layout between seasons.** `ADP_FILENAME_PATTERNS` holds the known filename conventions and `_normalize_adp_frame` reduces either column layout to `Player/POS/Team/AVG`. The 2026 export folds team and bye into the player cell (`"Jahmyr Gibbs   DET (6)"`), omits `Team` and `Bye`, and carries a per-site column set that differs between the three files. Expect to add a pattern rather than rewrite the loader.
+
+**Superflex ADP is a fourth column, not a fourth format.** `superflex_adp` comes from its own FantasyPros export and is selected by the *lineup* rather than by the scoring format — a superflex league is PPR or standard like any other, so `normalize_scoring_format` still knows exactly three. It cannot be derived from the other three either: where the field takes a quarterback when two can start is a fact about the field, and no scoring table implies it. Josh Allen is ADP 25.6 in PPR and 2.5 in superflex, which is the entire reason the column exists.
+
+It is the one ADP file that is **optional**. `_resolve_adp_file(required=False)` returns None instead of raising, because no season before 2026 has one and only leagues with an SFLEX slot ever read it. It also has **no `POS` column** — it ranks a single merged list, with no positional-rank field to strip — so `_normalize_adp_frame` treats `POS` as optional and lets position coalesce from the three files that do carry one. Coverage is the top 270: kickers, defenses and the deep pool keep a null and fall back to the format column.
+
+`ingest_data` runs `ALTER TABLE players ADD COLUMN IF NOT EXISTS superflex_adp` before the COPY. It is idempotent, and it is there so an older database does not need anyone to remember a migration on the morning of a draft.
 
 Season values are still hardcoded in the unused parquet pipeline: `ingest_stats.py` defaults to `season=2024` and `ingest_adp.py` hardcodes `FantasyPros_2025_*`.
 

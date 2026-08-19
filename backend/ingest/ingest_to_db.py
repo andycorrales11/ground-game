@@ -28,10 +28,25 @@ ADP_FORMATS = {
     "PPR": "ppr_adp",
 }
 
-# FantasyPros has shipped at least two different export layouts. Try each naming
+# Superflex is a *fourth ADP column*, not a fourth scoring format, and the
+# distinction matters in both directions.
+#
+# It is not a format because it changes nothing about what a point is worth --
+# `utils.normalize_scoring_format` still only knows three, and a superflex league
+# is PPR or standard like any other. It cannot be derived from the other three
+# either: where the field drafts a quarterback when two can start is a fact about
+# the field, and no scoring table implies it.
+#
+# So it rides alongside them as its own column, selected by the *lineup* rather
+# than by the format. See `create_vbd_big_board`.
+SUPERFLEX_ADP_LABEL = "Superflex"
+SUPERFLEX_ADP_COLUMN = "superflex_adp"
+
+# FantasyPros has shipped at least three different export layouts. Try each naming
 # convention in turn so a season's files work whichever export was downloaded.
 ADP_FILENAME_PATTERNS = [
     "FantasyPros_{season}_Overall_ADP_Rankings_{label}.csv",  # 2026 "Overall ADP Rankings"
+    "FantasyPros_{season}_{label}_ADP_Rankings.csv",          # 2026 "Superflex ADP Rankings"
     "FantasyPros_{season}_{label}_ADP.csv",                   # 2025 "ADP" export
 ]
 
@@ -45,7 +60,7 @@ PLAYER_BYE_RE = re.compile(
 
 DB_COLUMNS = [
     "sleeper_id", "display_name", "normalized_name", "team", "pos", "bye",
-    "std_adp", "half_ppr_adp", "ppr_adp",
+    "std_adp", "half_ppr_adp", "ppr_adp", "superflex_adp",
     "std_proj_pts", "half_ppr_proj_pts", "ppr_proj_pts",
 ]
 
@@ -176,14 +191,25 @@ def _resolve_sleeper_id(name, pos, index: list[dict]) -> str | None:
     return None
 
 
-def _resolve_adp_file(season: int, label: str, adp_dir: Path) -> Path:
-    """Finds a season's ADP file under any of the known FantasyPros naming conventions."""
+def _resolve_adp_file(
+    season: int, label: str, adp_dir: Path, required: bool = True
+) -> Path | None:
+    """
+    Finds a season's ADP file under any of the known FantasyPros naming conventions.
+
+    `required=False` returns None instead of raising, which is what the superflex
+    file uses: it is an extra column rather than one of the three the board is
+    built from, and past seasons predate it entirely. A missing one has to leave
+    the rest of the ingest working.
+    """
     tried = []
     for pattern in ADP_FILENAME_PATTERNS:
         path = adp_dir / pattern.format(season=season, label=label)
         if path.exists():
             return path
         tried.append(path.name)
+    if not required:
+        return None
     raise FileNotFoundError(
         f"No {label} ADP file for {season} in {adp_dir}.\n"
         f"Looked for: {', '.join(tried)}\n"
@@ -199,11 +225,19 @@ def _normalize_adp_frame(df: pd.DataFrame, source: str) -> pd.DataFrame:
     folds them into the player cell ("Jahmyr Gibbs   DET (6)"), and carries a
     variable set of per-site columns that differ between the three files.
     """
-    if "AVG" not in df.columns or "POS" not in df.columns:
-        raise ValueError(f"{source} is missing expected columns: needs POS and AVG")
+    if "AVG" not in df.columns:
+        raise ValueError(f"{source} is missing expected column: needs AVG")
+
+    # POS is optional. The superflex export omits it entirely -- it ranks one
+    # merged list and has no positional-rank column to strip. That costs nothing,
+    # because position is coalesced across every file that *does* carry one and
+    # groupby.first() skips the nulls.
+    pos = df["POS"] if "POS" in df.columns else pd.Series(pd.NA, index=df.index)
 
     if "Player" in df.columns and "Team" in df.columns:
-        out = df[["Player", "POS", "Team", "AVG"]].copy()
+        out = df[["Player", "AVG"]].copy()
+        out["POS"] = pos
+        out["Team"] = df["Team"]
         # The older export carries Bye as its own column. Treat it as optional so a
         # layout without one still loads -- _fill_byes_from_team can recover it from
         # the team anyway.
@@ -219,7 +253,7 @@ def _normalize_adp_frame(df: pd.DataFrame, source: str) -> pd.DataFrame:
     parts = df["Player (Bye)"].astype(str).str.strip().str.extract(PLAYER_BYE_RE)
     out = pd.DataFrame({
         "Player": parts["name"].str.strip(),
-        "POS": df["POS"],
+        "POS": pos,
         "Team": parts["team"],  # NaN for unsigned free agents
         "Bye": pd.to_numeric(parts["bye"], errors="coerce"),
         "AVG": df["AVG"],
@@ -245,6 +279,19 @@ def load_adp_data(season: int, adp_dir: Path) -> pd.DataFrame:
         df = _normalize_adp_frame(pd.read_csv(path), path.name)
         print(f"  {label:<8} {len(df):>4} rows from {path.name}")
         frames[adp_col] = df.rename(columns={"AVG": adp_col})
+
+    # Superflex, if the season has one. Optional in a way the three above are not:
+    # it is an extra column rather than one the board is built from, only leagues
+    # with a superflex slot ever read it, and no season before 2026 has the file.
+    superflex_path = _resolve_adp_file(
+        season, SUPERFLEX_ADP_LABEL, adp_dir, required=False
+    )
+    if superflex_path is None:
+        print(f"  {SUPERFLEX_ADP_LABEL:<8}    - not found; superflex_adp will be NULL")
+    else:
+        df = _normalize_adp_frame(pd.read_csv(superflex_path), superflex_path.name)
+        print(f"  {SUPERFLEX_ADP_LABEL:<8} {len(df):>4} rows from {superflex_path.name}")
+        frames[SUPERFLEX_ADP_COLUMN] = df.rename(columns={"AVG": SUPERFLEX_ADP_COLUMN})
 
     # First non-null POS/Team/Bye across all three files wins -- groupby.first()
     # skips NaN, so a player listed in only one file still keeps their identity.
@@ -508,6 +555,13 @@ def ingest_data(data):
         return
 
     with conn.cursor() as cur:
+        # Bring an older players table up to the current column set before the
+        # COPY names a column it does not have. Idempotent, and cheaper than
+        # asking anyone to remember a migration on the morning of a draft.
+        cur.execute(
+            f"ALTER TABLE players ADD COLUMN IF NOT EXISTS {SUPERFLEX_ADP_COLUMN} FLOAT;"
+        )
+
         # Clear existing data
         cur.execute("TRUNCATE TABLE players RESTART IDENTITY;")
         print("Players table truncated.")

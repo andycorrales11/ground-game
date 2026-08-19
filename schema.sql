@@ -8,6 +8,13 @@ CREATE TABLE players (
     std_adp FLOAT,
     half_ppr_adp FLOAT,
     ppr_adp FLOAT,
+    -- Where the field drafts a player when two quarterbacks can start. Not a
+    -- fourth scoring format -- a superflex league is PPR or standard like any
+    -- other -- and not derivable from the three above, because no scoring table
+    -- implies what the field does with quarterbacks. Selected by the lineup
+    -- rather than the format, and NULL for anyone the superflex export omits
+    -- (kickers, defenses, and the deep pool past ~270).
+    superflex_adp FLOAT,
     std_proj_pts FLOAT,
     half_ppr_proj_pts FLOAT,
     ppr_proj_pts FLOAT
