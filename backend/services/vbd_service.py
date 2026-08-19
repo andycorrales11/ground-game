@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from backend import config
 from backend import league
-from backend.services import data_service
+from backend.services import data_service, projection_service
 from backend import utils
 import logging
 from .draft import Draft, Team
@@ -285,6 +285,58 @@ def calculate_vona_board(
     )
 
 
+def _apply_engine_projections(
+    board: pd.DataFrame, points_col: str, scoring: league.ScoringSettings
+) -> pd.DataFrame:
+    """
+    Overwrites stored projections with ones computed for this league's scoring.
+
+    The board is a **hybrid**, and deliberately so. The projection engine models
+    quarterbacks, running backs, receivers and tight ends -- 441 players -- and
+    nothing else. Kickers, defenses, and the couple of hundred deep-pool skill
+    players it does not list keep the stored per-format projection they have
+    always had.
+
+    That seam is visible if you go looking: a fourth-string receiver's points do
+    not move when you change the scoring, because his number came from Sleeper.
+    It is the right trade anyway. Everyone affected sits far below replacement
+    level, where VORP is negative and the ordering barely matters, and the
+    alternative -- dropping them -- would empty the back half of a 20-round
+    board and put every kicker back at an unprojected NaN.
+
+    Players the engine covers but the board does not are already gone by this
+    point; `projected_points` drops them only after projecting them, so their
+    share weights still hold their teammates' shares down.
+    """
+    if 'sleeper_id' not in board.columns:
+        logging.warning(
+            "Board has no sleeper_id column; keeping stored projections. "
+            "Engine projections join on it."
+        )
+        return board
+
+    try:
+        points = projection_service.projected_points(scoring)
+    except Exception as error:  # noqa: BLE001 -- never take the draft down over this
+        logging.warning("Could not compute engine projections (%s). Keeping stored ones.", error)
+        return board
+
+    if points.empty:
+        logging.info(
+            "No active projection set; the board is using stored %s projections.", points_col
+        )
+        return board
+
+    computed = board['sleeper_id'].map(points)
+    board[points_col] = computed.where(computed.notna(), board[points_col])
+
+    logging.info(
+        "Projected %d of %d players from league scoring; %d kept stored projections.",
+        int(computed.notna().sum()), len(board), int(computed.isna().sum()),
+    )
+    return board
+
+
 def create_vbd_big_board(
     season: int = 2024,
     format: str = config.DEFAULT_DRAFT_FORMAT,
@@ -339,6 +391,10 @@ def create_vbd_big_board(
     else:
         logging.warning(f"Projection column for format '{format}' not found. Fantasy points will be missing.")
         base_df[fantasy_points_col] = 0.0
+
+    # Replace the stored projection with one computed for this league, wherever
+    # the engine covers the player.
+    base_df = _apply_engine_projections(base_df, fantasy_points_col, scoring)
 
     # 4. Calculate VORP for all positions
     final_df = base_df.copy()
