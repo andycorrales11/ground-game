@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { errorMessage, startLiveDraft } from '@/lib/api';
+import { hasStartingSlot, type RosterCounts, type ScoringSettings } from '@/lib/league';
 
 import {
   Field,
@@ -11,6 +12,7 @@ import {
   primaryButtonClass,
   quietButtonClass,
 } from '../_components/FormControls';
+import LeagueSettings from '../_components/LeagueSettings';
 
 export default function LiveDraftStartPage() {
   const router = useRouter();
@@ -19,12 +21,31 @@ export default function LiveDraftStartPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /*
+    Both null unless the user says otherwise, and here that matters more than it
+    does in a mock draft: Sleeper reports the league's scoring format, and
+    sending a scoring table anyway would override it with whatever preset this
+    form happened to be showing. Only a deliberate customisation is sent.
+
+    `presetFormat` seeds the values when the user does turn scoring on. It is
+    the form's own starting point, not a claim about the Sleeper league -- the
+    ADP column still comes from the format Sleeper reports.
+  */
+  const [scoring, setScoring] = useState<ScoringSettings | null>(null);
+  const [roster, setRoster] = useState<RosterCounts | null>(null);
+  const [presetFormat, setPresetFormat] = useState('PPR');
+
+  const lineupIsEmpty = roster !== null && !hasStartingSlot(roster);
+
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setIsProcessing(true);
     setError(null);
     try {
-      const sessionId = await startLiveDraft(draftId.trim(), Number.parseInt(pickSlot, 10));
+      const sessionId = await startLiveDraft(draftId.trim(), Number.parseInt(pickSlot, 10), {
+        ...(scoring ? { scoring } : {}),
+        ...(roster ? { roster } : {}),
+      });
       router.push(`/draft/helper/${sessionId}`);
     } catch (err) {
       setError(
@@ -78,7 +99,7 @@ export default function LiveDraftStartPage() {
         <Field
           label="Your pick slot"
           htmlFor="pickSlot"
-          hint="Everything else — teams, rounds, scoring, order — is read from the Sleeper draft."
+          hint="Teams, rounds, draft order and the scoring format are read from the Sleeper draft."
         >
           <input
             id="pickSlot"
@@ -92,8 +113,22 @@ export default function LiveDraftStartPage() {
           />
         </Field>
 
-        <div className="mt-3 space-y-2">
-          <button type="submit" disabled={isProcessing} className={primaryButtonClass}>
+        <LeagueSettings
+          presetFormat={presetFormat}
+          onPresetFormatChange={setPresetFormat}
+          scoring={scoring}
+          onScoringChange={setScoring}
+          roster={roster}
+          onRosterChange={setRoster}
+          disabled={isProcessing}
+        />
+
+        <div className="mt-5 space-y-2">
+          <button
+            type="submit"
+            disabled={isProcessing || lineupIsEmpty}
+            className={primaryButtonClass}
+          >
             {isProcessing ? 'Connecting to Sleeper' : 'Start live draft'}
           </button>
           <button

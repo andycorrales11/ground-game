@@ -1,5 +1,6 @@
 import axios from 'axios';
 
+import type { RosterCounts, ScoringSettings } from './league';
 import type { DraftMode, DraftState, LivePick } from './types';
 
 /*
@@ -90,7 +91,20 @@ export async function pollLiveDraft(sessionId: string): Promise<LivePick[]> {
   return data.new_picks ?? [];
 }
 
-export interface SimulationSettings {
+/*
+  The league's own rules, on both start routes.
+
+  Both are optional, and omitting one is meaningfully different from sending its
+  defaults: omitted means "the backend decides", which for a live draft is what
+  lets Sleeper's own scoring format stand. Never send these filled in with
+  guesses -- send nothing.
+*/
+export interface LeagueOverrides {
+  scoring?: ScoringSettings;
+  roster?: RosterCounts;
+}
+
+export interface SimulationSettings extends LeagueOverrides {
   pick_slot: number;
   teams: number;
   rounds: number;
@@ -108,13 +122,22 @@ export async function startSimulation(settings: SimulationSettings): Promise<str
 }
 
 /**
- * Returns the new session id. Team count, rounds, scoring and order all come
- * from the Sleeper draft itself, so this takes only what Sleeper cannot tell us.
+ * Returns the new session id.
+ *
+ * Team count, rounds, draft order and the scoring *format* all come from the
+ * Sleeper draft itself. What Sleeper's draft endpoint does not carry is the
+ * league's exact point values or its starting lineup, so those can be supplied
+ * here -- and when they are not, the backend keeps using Sleeper's format.
  */
-export async function startLiveDraft(draftId: string, pickSlot: number): Promise<string> {
+export async function startLiveDraft(
+  draftId: string,
+  pickSlot: number,
+  overrides: LeagueOverrides = {},
+): Promise<string> {
   const { data } = await client.post<{ session_id: string }>(`${ROUTE_BASE.live}/start`, {
     draft_id: draftId,
     pick_slot: pickSlot,
+    ...overrides,
   });
   return data.session_id;
 }

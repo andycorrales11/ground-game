@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { errorMessage, startSimulation } from '@/lib/api';
+import { hasStartingSlot, receptionsFor, type RosterCounts, type ScoringSettings } from '@/lib/league';
 
 import {
   Field,
@@ -11,6 +12,7 @@ import {
   primaryButtonClass,
   quietButtonClass,
 } from './_components/FormControls';
+import LeagueSettings from './_components/LeagueSettings';
 
 export default function StartPage() {
   const router = useRouter();
@@ -24,6 +26,24 @@ export default function StartPage() {
   const [format, setFormat] = useState('PPR');
   const [order, setOrder] = useState('snake');
 
+  /*
+    Null means "not customised" -- the backend applies the preset for `format`.
+    That is a different thing from sending the preset's own values, and keeping
+    the distinction is what lets the backend stay the source of truth for
+    anything the form has no opinion about.
+  */
+  const [scoring, setScoring] = useState<ScoringSettings | null>(null);
+  const [roster, setRoster] = useState<RosterCounts | null>(null);
+
+  const handleFormatChange = (next: string) => {
+    setFormat(next);
+    // The format still picks the ADP column, and it seeds what a catch is worth.
+    // Everything else the user has set stays put.
+    if (scoring) setScoring({ ...scoring, ...receptionsFor(next) });
+  };
+
+  const lineupIsEmpty = roster !== null && !hasStartingSlot(roster);
+
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setIsProcessing(true);
@@ -35,6 +55,9 @@ export default function StartPage() {
         rounds: Number.parseInt(rounds, 10),
         format,
         order,
+        // Omitted entirely when untouched, rather than sent as defaults.
+        ...(scoring ? { scoring } : {}),
+        ...(roster ? { roster } : {}),
       });
       router.push(`/draft/simulation/${sessionId}`);
     } catch (err) {
@@ -147,7 +170,7 @@ export default function StartPage() {
               <select
                 id="format"
                 value={format}
-                onChange={(event) => setFormat(event.target.value)}
+                onChange={(event) => handleFormatChange(event.target.value)}
                 disabled={isProcessing}
                 className={controlClass}
               >
@@ -172,8 +195,21 @@ export default function StartPage() {
             </Field>
           </div>
 
-          <div className="mt-3 space-y-2">
-            <button type="submit" disabled={isProcessing} className={primaryButtonClass}>
+          <LeagueSettings
+            presetFormat={format}
+            scoring={scoring}
+            onScoringChange={setScoring}
+            roster={roster}
+            onRosterChange={setRoster}
+            disabled={isProcessing}
+          />
+
+          <div className="mt-5 space-y-2">
+            <button
+              type="submit"
+              disabled={isProcessing || lineupIsEmpty}
+              className={primaryButtonClass}
+            >
               {isProcessing ? 'Building the board' : 'Start mock draft'}
             </button>
             <button
