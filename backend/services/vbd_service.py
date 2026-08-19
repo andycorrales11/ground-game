@@ -13,6 +13,26 @@ from .simulation_service import simulate_cpu_pick
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 
+def _position_adjustment(position: str, position_slots: list) -> float:
+    """
+    The tuning multiplier applied to a position's VORP column, for this lineup.
+
+    `config.POSITION_ADJUSTMENT` dampens QB to 0.8. That is a one-quarterback
+    league constant: there, replacement level sits at QB12-ish, where the drop-off
+    behind it is shallow enough that raw VORP overstates what an elite quarterback
+    is actually worth to a lineup that starts exactly one.
+
+    A superflex league inverts the premise. Replacement level moves to roughly
+    QB24, the position becomes the scarcest thing on the board, and the dampener
+    would be shaving 20% off the column precisely where it is telling the truth --
+    which is the single most reliable way to lose a superflex draft. The slot
+    already says the league is different; nothing else has to be configured.
+    """
+    if position == 'QB' and 'SFLEX' in position_slots:
+        return 1.0
+    return config.POSITION_ADJUSTMENT.get(position, 1.0)
+
+
 def calculate_vorp(
     df: pd.DataFrame, 
     position: str, 
@@ -69,7 +89,7 @@ def calculate_vorp(
     # with no projection keeps NaN: they are unranked, not replacement level.
     # _json_safe_records turns it into null at the edge, every sort here uses the
     # default na_position='last', and the CPU ranks with na_option='bottom'.
-    adjustment_factor = config.POSITION_ADJUSTMENT.get(position, 1.0)
+    adjustment_factor = _position_adjustment(position, list(roster_config))
     df_pos['VORP_pos'] = (df_pos[points_column] - replacement_value) * adjustment_factor
 
     # Update the main DataFrame's VORP column for the specific position

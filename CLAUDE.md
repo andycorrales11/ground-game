@@ -107,9 +107,11 @@ Each board row carries `PTS`, the season projection, copied from the format-spec
 
 `backend/services/vbd_service.py`:
 
-- **VORP** — points above the replacement-level player at that position. Replacement level comes from `league.replacement_rank(position, teams, position_slots)`: starters plus a fractional charge for each flex and superflex slot, split by `league.FLEX_SHARE` (RB/WR 50/50) and `league.SUPERFLEX_SHARE` (all QB). With the default lineup this is exactly the old `(starters × teams) + (flex × teams × 0.5)`. Result is scaled by `config.POSITION_ADJUSTMENT` (QB is dampened to 0.8; anything absent is 1.0). Computed for every position in `config.VORP_POSITIONS`, which now includes K and DEF — they were excluded only because the Athletic CSVs never projected them.
+- **VORP** — points above the replacement-level player at that position. Replacement level comes from `league.replacement_rank(position, teams, position_slots)`: starters plus a fractional charge for each flex and superflex slot, split by `league.flex_share(...)` and `league.SUPERFLEX_SHARE` (all QB). With the default lineup this is exactly the old `(starters × teams) + (flex × teams × 0.5)`. Result is scaled by `config.POSITION_ADJUSTMENT` (QB is dampened to 0.8; anything absent is 1.0). Computed for every position in `config.VORP_POSITIONS`, which now includes K and DEF — they were excluded only because the Athletic CSVs never projected them.
 
-  The `POSITION_ADJUSTMENT` factor is a tuning constant applied *after* the subtraction, so it rescales a position's whole column rather than shifting its baseline.
+  The `POSITION_ADJUSTMENT` factor is a tuning constant applied *after* the subtraction, so it rescales a position's whole column rather than shifting its baseline. **It is skipped for QB in a superflex league.** The 0.8 dampener is a one-quarterback constant — there, replacement level sits around QB12 where the drop-off behind it is shallow enough that raw VORP overstates an elite starter. A superflex lineup moves replacement level to roughly QB24 and makes the position the scarcest thing on the board, so the dampener would be shaving 20% off the column exactly where it is telling the truth. `_position_adjustment` reads the SFLEX slot; nothing else has to be configured.
+
+  **The flex share depends on the lineup, which is why it is a function and not a constant.** `FLEX_SHARE` charges a flex 50/50 to RB/WR and gives TE nothing, on the grounds that a lineup with a TE slot has already absorbed its tight-end demand there. A lineup with **no dedicated TE slot** breaks that premise outright: every started tight end is in a flex by definition, and leaving TE at 0.0 makes `replacement_rank` return **0**, which makes `calculate_vorp` read replacement level off the *best* tight end in the pool and hand the entire position zero-or-negative VORP — in the one format where a flex tight end is the whole question. `FLEX_SHARE_NO_TE_SLOT` charges RB/WR/TE 0.4/0.4/0.2 instead. The TE share is deliberately well under an even third: a league that does not start a tight end by name is one where most teams stream the position and only the genuinely elite ones ever occupy a flex.
 
   **VORP is static for the whole draft.** It is computed once in `create_vbd_big_board` and never recomputed — a 40-pick run changes 0 of 652 values. That is correct for classic VBD, since replacement level is a property of league structure and not of who is left, but it does mean VORP is a preseason ranking that says nothing new as the draft unfolds. VONA is the column that responds to draft state, and the frontend's tier cliffs (`lib/tiers.ts`) are what read scarcity off VORP gaps.
 
@@ -187,7 +189,7 @@ Changing the scoring format re-seeds **only the three reception fields**, becaus
 
 `backend/services/simulation_service.py` scores players on a **lower-is-better** scale:
 
-- `simulate_cpu_pick` — blends VORP rank and ADP rank 10/90, applies a ×5.0 penalty for a 3rd QB and a ×0.70 bonus for unfilled starting slots, then samples from the top 10 with a fixed probability vector (60% top choice) so drafts aren't deterministic.
+- `simulate_cpu_pick` — blends VORP rank and ADP rank 10/90, applies a ×5.0 penalty once a team is saturated at QB and a ×0.70 bonus for unfilled starting slots, then samples from the top 10 with a fixed probability vector (60% top choice) so drafts aren't deterministic.
 
 **Kickers and defenses are held back by `_apply_late_round_penalty`.** K/DEF ADP sits around 120–200, which is the best thing left on the board by the middle rounds, and K/DEF are *starting* slots so the ×0.70 need bonus actively pulls them forward. Three regimes, keyed off `total_rounds - team.picks_made`:
 
@@ -199,6 +201,8 @@ Changing the scoring format re-seeds **only the three reception fields**, becaus
 | …but best available, within `ELITE_WINDOW` (4) | `ELITE_PENALTY` 8 | the elite defense that goes early |
 
 **The penalty has to be this large.** A defense with the best remaining ADP scores near 1.0, and the CPU samples from the top *10* — ×12 only moved it to about rank 8, still inside the window, so defenses still went in round 10. And the final-rounds *bonus* is not optional: with a penalty that merely lifted, 40 of 60 teams finished the draft with no kicker at all.
+
+**Saturation at QB is read off the lineup, not fixed at two.** `_qb_saturation_point` counts the team's QB and SFLEX slots and allows one backup on top. A default lineup gives 1 + 0 + 1 = 2, exactly the constant it replaced. A superflex lineup gives 3, so the third quarterback — a genuinely valuable backup when two start — no longer looks like hoarding. Left at 2, every CPU team in a superflex draft treated a *starting* lineup as a stockpile and left the format's scarcest position on the board.
 
 `rounds_remaining` comes from `Team.picks_made`, deliberately — not a fifth copy of the snake-order arithmetic.
 - `simulate_user_auto_pick` — VONA/VORP/ADP weighted 50/20/30, picks the single best score with no randomness. It reads a `VONA` column that lives in the session, not on the board, so **every caller must attach it first**; `get_current_draft_state` attaches it to its own copy, and `process_auto_pick_helper` not doing the same is what made `POST /draft/helper/{id}/auto-pick` raise `KeyError: 'VONA'` on every call.

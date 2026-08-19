@@ -115,9 +115,36 @@ class ScoringSettings:
 # How a flex slot's demand is charged to each position when finding replacement
 # level. The RB/WR split was hardcoded at 50/50 inside calculate_vorp; it is a
 # tuning constant, not a derivation, so it lives here where it can be seen.
-# Tight ends are flex-eligible but are so rarely started there that charging
-# them any of it would move TE replacement level for no reason.
+# Tight ends are flex-eligible but, *when the lineup starts one at TE*, are so
+# rarely started in a flex that charging them any of it would move TE
+# replacement level for no reason.
 FLEX_SHARE: Dict[str, float] = {'RB': 0.5, 'WR': 0.5}
+
+# The same split for a lineup with **no dedicated TE slot**, where every started
+# tight end is in a flex by definition. Leaving TE at 0.0 there is not a
+# rounding error, it is a division by the position: `replacement_rank` returns 0,
+# `calculate_vorp` reads replacement level off the *best* tight end in the pool,
+# and the entire position comes back at zero-or-negative VORP -- in the one
+# league format where a flex tight end is the whole question.
+#
+# The TE share is deliberately well under an even third. A league that does not
+# start a tight end by name is one where most teams stream the position and only
+# the two or three genuinely elite ones ever occupy a flex.
+FLEX_SHARE_NO_TE_SLOT: Dict[str, float] = {'RB': 0.4, 'WR': 0.4, 'TE': 0.2}
+
+
+def flex_share(position_slots: List[str]) -> Dict[str, float]:
+    """
+    How one flex slot's demand divides across the positions eligible for it, for
+    a given starting lineup.
+
+    This is a function of the lineup rather than a constant because a flex means
+    something different depending on what sits next to it. Alongside a TE slot it
+    is an RB/WR slot in practice; with no TE slot it is the only place a tight end
+    can start, and the position has to be charged for it or it has no replacement
+    level at all.
+    """
+    return FLEX_SHARE if 'TE' in position_slots else FLEX_SHARE_NO_TE_SLOT
 
 # A superflex slot is a quarterback slot in all but name. Leagues that run one
 # see QB2s drafted like RB1s, which is the entire point of the format, so the
@@ -161,7 +188,7 @@ def replacement_rank(position: str, teams: int, position_slots: List[str]) -> in
 
     demand = (
         starters
-        + flex * FLEX_SHARE.get(position, 0.0)
+        + flex * flex_share(position_slots).get(position, 0.0)
         + superflex * SUPERFLEX_SHARE.get(position, 0.0)
     )
     return int(teams * demand)

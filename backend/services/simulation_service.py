@@ -62,6 +62,29 @@ def _apply_late_round_penalty(players: pd.DataFrame, score_column: str,
                     players.loc[ranked.idxmax(), score_column] *= ELITE_PENALTY / LATE_ROUND_PENALTY
 
 
+# A team may roster one more quarterback than it can start before the CPU treats
+# it as hoarding. Read off the lineup rather than fixed at 2: a superflex league
+# starts two, so the old constant made a *starting* lineup look like a third-QB
+# stockpile and taught every CPU team to leave the format's scarcest position on
+# the board.
+QB_SURPLUS_ALLOWED = 1
+
+
+def _qb_saturation_point(team: Team) -> int:
+    """
+    The number of quarterbacks at which one more becomes a wasted pick.
+
+    Slots the team was built with are the source: QB slots plus superflex slots,
+    since a superflex is a quarterback slot in all but name, plus one backup. A
+    default lineup gives 1 + 0 + 1 = 2, exactly the constant this replaced.
+    """
+    startable = sum(
+        1 for slot in team.roster
+        if slot.startswith('QB') or slot.startswith('SFLEX')
+    )
+    return startable + QB_SURPLUS_ALLOWED
+
+
 def calculate_positional_scarcity(players: pd.DataFrame) -> dict:
     """
     Calculates the VORP drop-off for each position to determine scarcity.
@@ -103,8 +126,8 @@ def simulate_cpu_pick(available_players: pd.DataFrame, team: Team, total_rounds:
     players = calculate_draft_score(available_players)
 
     # 2. Apply penalties and bonuses
-    # QB Penalty: If team has 2 QBs, heavily penalize drafting another
-    if team.count_players_at_position('QB') >= 2:
+    # QB Penalty: once the team can neither start nor bench another, hold off.
+    if team.count_players_at_position('QB') >= _qb_saturation_point(team):
         players.loc[players['pos'] == 'QB', 'draft_score'] *= 5.0 # Heavy penalty
 
     # Starter Bonus: Prioritize filling starting spots
@@ -166,7 +189,7 @@ def simulate_user_auto_pick(available_players: pd.DataFrame, team: Team, total_r
 
     # 3. Apply penalties and bonuses
     # QB Penalty
-    if team.count_players_at_position('QB') >= 2:
+    if team.count_players_at_position('QB') >= _qb_saturation_point(team):
         players.loc[players['pos'] == 'QB', 'auto_pick_score'] *= 5.0
 
     # Starter Bonus
