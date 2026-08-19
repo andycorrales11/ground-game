@@ -8,3 +8,4 @@ nfl_data_py
 psycopg[binary]
 fastapi
 uvicorn[standard]
+openpyxl
