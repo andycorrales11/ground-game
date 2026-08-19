@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from typing import List
+from typing import Dict, List
 
 from backend.services.draft_manager_service import DraftManagerService
 
@@ -17,6 +17,18 @@ class DraftSettings(BaseModel):
     rounds: int | None = None # For simulation
     format: str | None = None # For simulation
     order: str | None = None # For simulation
+
+    # What the league actually pays, and who it starts. Both are optional and
+    # both default to what `format` implies, so a client that knows nothing
+    # about them gets exactly the behaviour it got before they existed.
+    #
+    # `scoring` takes any field of backend.league.ScoringSettings, e.g.
+    # {"pass_tds": 6, "receptions_te": 1.0}. `roster` takes any field of
+    # RosterSettings bar `teams`, e.g. {"wr": 3, "flex": 1, "superflex": 1}.
+    # Unknown keys in either are rejected rather than ignored -- a typo in a
+    # scoring override would otherwise mis-score the whole draft in silence.
+    scoring: Dict[str, float] | None = None
+    roster: Dict[str, int] | None = None
 
 class PlayerPick(BaseModel):
     player_name: str
@@ -50,7 +62,9 @@ async def start_draft(settings: DraftSettings):
         teams=settings.teams,
         rounds=settings.rounds,
         format=settings.format,
-        order=settings.order
+        order=settings.order,
+        scoring=settings.scoring,
+        roster=settings.roster,
     )
     if "error" in result:
         return JSONResponse(content=result, status_code=400)
@@ -100,7 +114,9 @@ async def start_draft_helper(settings: DraftSettings):
         teams=settings.teams,
         rounds=settings.rounds,
         format=settings.format,
-        order=settings.order
+        order=settings.order,
+        scoring=settings.scoring,
+        roster=settings.roster,
     )
     if "error" in result:
         return JSONResponse(content=result, status_code=400)

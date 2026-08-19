@@ -3,6 +3,12 @@ from collections import Counter
 from typing import List, Dict, Set
 from backend import config
 
+# Who can fill the two kinds of open slot. A superflex takes a quarterback --
+# that is the entire reason a league runs one -- on top of everyone a plain flex
+# takes.
+FLEX_ELIGIBLE = ('WR', 'RB', 'TE')
+SUPERFLEX_ELIGIBLE = ('QB', 'WR', 'RB', 'TE')
+
 class Draft:
     """
     Manages the state of a fantasy football draft, including available players,
@@ -122,10 +128,17 @@ class Team:
                 self.roster[slot] = player
                 return
 
-        # If no position-specific slot, try a FLEX spot for eligible positions
-        if pos in ('WR', 'RB', 'TE'):
+        # If no position-specific slot, try a FLEX spot for eligible positions,
+        # then a superflex. The order matters: a quarterback can only sit in a
+        # superflex, so filling one with a running back who had a plain FLEX
+        # available would strand the next quarterback on the bench.
+        #
+        # Note 'SFLEX1'.startswith('FLEX') is False, so the two never collide.
+        for eligible, stem in ((FLEX_ELIGIBLE, 'FLEX'), (SUPERFLEX_ELIGIBLE, 'SFLEX')):
+            if pos not in eligible:
+                continue
             for slot in self.roster:
-                if slot.startswith('FLEX') and self.roster[slot] is None:
+                if slot.startswith(stem) and self.roster[slot] is None:
                     self.roster[slot] = player
                     return
         

@@ -11,6 +11,7 @@ import pytest
 from backend import config
 from backend.services.draft import Draft, Team
 from backend.services.draft_manager_service import DraftManagerService as DMS
+from backend.services.vbd_service import WaitingCost
 from backend.services.draft_service import get_user_picks
 from backend.tests.boards import make_board
 
@@ -289,3 +290,78 @@ def test_every_pick_lands_in_a_slot(short_session):
     filled = [player for player in user_team.roster.values() if player]
 
     assert len(filled) == user_team.picks_made == SMALL_ROUNDS
+
+
+# --- VONA's span ------------------------------------------------------------
+
+
+def _captured_span(monkeypatch, state, current_pick_num):
+    """The picks_to_simulate _calculate_and_store_vona works out for a given pick."""
+    seen = {}
+
+    def fake_board(available, draft_obj, teams_list, picks_to_simulate, current_pick):
+        seen["picks"] = picks_to_simulate
+        return WaitingCost({}, {})
+
+    monkeypatch.setattr(
+        "backend.services.draft_manager_service.calculate_vona_board", fake_board
+    )
+    state["current_pick_num"] = current_pick_num
+    DMS._calculate_and_store_vona(state)
+    return seen.get("picks")
+
+
+def test_vona_spans_to_the_next_turn_from_your_own_pick(monkeypatch, session):
+    """On the clock, the span is what you give up by passing: picks 2..23."""
+    _, state = session  # user picks at 1, 24, 25, 48
+
+    assert _captured_span(monkeypatch, state, 0) == 23
+
+
+def test_vona_has_a_span_off_your_turn_too(monkeypatch, session):
+    """
+    The point of the change: VONA used to exist only on the user's own pick.
+
+    Off-turn the lookup could not find the pick on the clock in the user's list
+    and gave up, leaving picks_to_simulate at 0 -- which calculate_vona_board
+    reads as "waiting is free" and returns a board of exact zeroes for. The room
+    had to grey the whole column out for every pick that was not yours.
+
+    Sitting at pick 6 with your next turn at 24, eighteen picks stand between
+    you and it, and those are exactly the ones that can take him.
+    """
+    _, state = session
+
+    assert _captured_span(monkeypatch, state, 5) == 18
+
+
+def test_vona_spans_back_to_back_picks(monkeypatch, session):
+    """
+    At the snake's turn, 24 and 25 are consecutive and the only pick in between
+    is your own -- which you would spend on somebody else. One player leaves the
+    pool, so the span is 1 rather than 0.
+    """
+    _, state = session
+
+    assert _captured_span(monkeypatch, state, 23) == 1
+
+
+def test_vona_has_no_span_after_your_last_pick(monkeypatch, session):
+    """No turn left to wait for, so there is nothing waiting could cost."""
+    _, state = session
+
+    assert _captured_span(monkeypatch, state, 47) == 0
+
+
+def test_state_carries_vona_off_your_turn(session):
+    """
+    End to end, against the real simulation: the board a CPU pick is showing has
+    live VONA on it, not a column of zeroes.
+    """
+    session_id, state = session
+    state["current_pick_num"] = 5  # a CPU pick; the user is next at 24
+
+    players = DMS.get_current_draft_state(session_id)["available_players"]
+
+    assert any(player["VONA"] > 0 for player in players)
+    assert any(player["GONE"] > 0 for player in players)

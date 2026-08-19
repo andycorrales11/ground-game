@@ -1,5 +1,9 @@
+import numpy as np
 import pandas as pd
+from dataclasses import dataclass
+
 from backend import config
+from backend import league
 from backend.services import data_service
 from backend import utils
 import logging
@@ -42,15 +46,11 @@ def calculate_vorp(
     if 'VORP' not in df.columns:
         df['VORP'] = float('nan')
 
-    # Determine replacement level based on roster settings
-    num_starters = roster_config.count(position)
-    num_flex = roster_config.count('FLEX')
-
-    # A simple approach to FLEX: assume a 50/50 split between RB and WR
-    if position == 'RB' or position == 'WR':
-        replacement_level = (num_starters * teams) + int(num_flex * teams * 0.5)
-    else:
-        replacement_level = num_starters * teams
+    # Replacement level is how deep the league starts at this position. Flex and
+    # superflex slots are charged fractionally across the positions eligible for
+    # them; league.replacement_rank owns that split so a superflex league moves
+    # QB replacement level without this function knowing what superflex is.
+    replacement_level = league.replacement_rank(position, teams, list(roster_config))
 
     # Sort players by fantasy points for the specified position
     df_pos = df[df['pos'] == position].copy()
@@ -122,15 +122,20 @@ def simulate_to_next_turn(
         if available_for_cpu.empty:
             break
 
-        # Only the skill positions are recomputed against the shrinking pool. K and
-        # DEF keep the VORP create_vbd_big_board gave them, which barely moves as
-        # the draft runs, and recomputing them here would cost 50% more passes
-        # through calculate_vorp in the hottest loop in the app.
-        for position in ('QB', 'RB', 'WR', 'TE'):
-            available_for_cpu = calculate_vorp(
-                available_for_cpu, position, teams=teams, format=draft_sim.format
-            )
-
+        # VORP is read off the board rather than recomputed here.
+        #
+        # This loop used to call calculate_vorp for QB/RB/WR/TE against the
+        # *available* pool, which quietly meant the simulated opponents valued
+        # players on a different basis than the board does: calculate_vorp takes
+        # the Nth best row of whatever frame it is given, so replacement level
+        # drifted down to worse players as the pool drained, inflating everyone's
+        # VORP relative to the static, full-pool figure the user sees.
+        #
+        # Replacement level is a property of the league's starting requirements,
+        # not of who is left, so the board's figure is the right one and the
+        # opponents should share it. Dropping the recompute also removes four
+        # full passes over the pool per simulated pick, in the hottest loop in
+        # the app.
         cpu_team = teams_sim[team_index]
         cpu_pick_name = utils.normalize_name(
             simulate_cpu_pick(available_for_cpu, cpu_team, draft_sim.rounds)
@@ -142,6 +147,22 @@ def simulate_to_next_turn(
     return draft_sim.get_available_players()
 
 
+@dataclass(frozen=True)
+class WaitingCost:
+    """
+    What the forward simulations say about waiting, per player.
+
+    Both are keyed by display name, which is the form the board and the session
+    already pass around.
+    """
+
+    # Expected points lost by not taking this player now: how far he is above the
+    # man you would settle for, weighted by how likely you are to lose him.
+    cost: dict[str, float]
+    # Probability, in [0, 1], that he is gone before your next turn.
+    gone: dict[str, float]
+
+
 def calculate_vona_board(
     available_players: pd.DataFrame,
     draft_obj: Draft,
@@ -149,68 +170,144 @@ def calculate_vona_board(
     picks_to_simulate: int,
     current_pick: int,
     runs: int = VONA_SIMULATION_RUNS,
-) -> dict[str, float]:
+) -> WaitingCost:
     """
-    VONA for every available player, from one shared set of forward simulations.
+    What waiting costs you, per player, from one shared set of forward simulations.
 
-    VONA asks: how much do I lose by waiting? That is the candidate's projection
-    minus the best projection still available at their position on my next turn --
-    and the forward simulation that answers the second half never looks at the
-    candidate at all.
+        cost = P(he is gone by your next turn) x (his points - the next man down's)
 
-    This used to be run once per candidate (50 near-identical simulations, ~17s),
-    which was both slow and subtly wrong: every candidate was scored against a
-    different random future, so the VONA column was not internally comparable.
-    Simulating a few times up front and averaging the best survivor per position
-    scores the whole board against the same expected outcome.
+    Both halves come out of the same simulations, and both vary per player. That
+    is the whole point of the current formulation, because the previous one did
+    neither.
 
-    Returns {display_name: vona}, clamped at 0 -- a player who is still there next
-    turn costs you nothing to wait on.
+    **What this replaced, and why.** VONA used to be
+    `max(0, points - best surviving points at that position)`. The subtracted
+    term was a single number per position, so within a position the column was
+    `points - constant` -- a rank-preserving shift of a column already on the
+    board, carrying no information the projection did not. Worse, the clamp
+    erased almost all of it: measured on a real 12-team board it produced **7
+    non-zero values out of 681 players**, with QB and TE routinely all zero. Its
+    entire information content was four numbers, presented as a per-player
+    column.
+
+    The fix is to compare a player against the man you would actually settle for
+    -- the best survivor at his position ranked *below* him -- rather than
+    against the best survivor outright. Against the best outright, every player
+    who is not the top of his position scores negative and clamps to zero. The
+    next man down is always worse than him, so the gap is a real drop-off and
+    the column stays alive all the way down the board.
+
+    Multiplying by the chance he is actually gone is what makes it a decision
+    rather than a description: a stud with a cliff behind him who will certainly
+    be taken scores high, and the same stud in a flat tier, or one nobody else
+    wants yet, scores low. Both are the right answer to "should I take him now?"
+
+    Returns a WaitingCost. `cost` is non-negative by construction -- there is no
+    clamp doing the work, the two factors simply cannot be negative.
     """
     points_col = utils.points_column(draft_obj.format)
 
-    if available_players.empty:
-        return {}
+    names = list(available_players['display_name']) if not available_players.empty else []
+    if not names:
+        return WaitingCost({}, {})
 
-    # No picks in between means nothing comes off the board, so waiting is free.
+    # No picks in between means nothing comes off the board, so waiting is free
+    # and nobody can be taken ahead of you.
     if picks_to_simulate <= 0:
-        return {name: 0.0 for name in available_players['display_name']}
+        return WaitingCost({name: 0.0 for name in names}, {name: 0.0 for name in names})
 
-    best_by_pos: dict[str, list[float]] = {}
+    candidates = available_players[['display_name', 'normalized_name', 'pos', points_col]]
+    points = pd.to_numeric(candidates[points_col], errors='coerce').to_numpy(dtype=float)
+    positions = candidates['pos'].to_numpy()
+    projected = ~np.isnan(points)
+
+    total = len(candidates)
+    survived = np.zeros(total, dtype=float)
+    next_down_sum = np.zeros(total, dtype=float)
+    next_down_runs = np.zeros(total, dtype=float)
+    completed = 0
+
     for _ in range(max(1, runs)):
         survivors = simulate_to_next_turn(
             draft_obj, teams_list, picks_to_simulate, current_pick
         )
         if survivors.empty:
             continue
-        for pos, best in survivors.groupby('pos')[points_col].max().items():
-            if pd.notna(best):
-                best_by_pos.setdefault(pos, []).append(best)
+        completed += 1
 
-    expected_best = {pos: sum(vals) / len(vals) for pos, vals in best_by_pos.items()}
+        survived += candidates['normalized_name'].isin(
+            set(survivors['normalized_name'])
+        ).to_numpy(dtype=float)
 
-    vona_results: dict[str, float] = {}
-    for name, pos, points in zip(
-        available_players['display_name'],
-        available_players['pos'],
-        available_players[points_col],
-    ):
-        # A position wiped out entirely, or a player with no projection (K/DEF),
-        # scores 0 rather than a meaningless number.
-        if pos not in expected_best or pd.isna(points):
-            vona_results[name] = 0.0
-            continue
-        vona = points - expected_best[pos]
-        vona_results[name] = float(vona) if vona > 0 else 0.0
+        for pos, group in survivors.groupby('pos'):
+            # Survivors at this position, ascending, so the best one below a
+            # given projection is the neighbour to the left of it.
+            surviving_points = np.sort(
+                pd.to_numeric(group[points_col], errors='coerce').dropna().to_numpy(dtype=float)
+            )
+            if surviving_points.size == 0:
+                continue
 
-    return vona_results
+            at_pos = np.flatnonzero((positions == pos) & projected)
+            if at_pos.size == 0:
+                continue
+
+            # side='left' puts the insertion point before any survivor equal to
+            # the candidate, so a player is never compared against himself or
+            # against someone tied with him.
+            index = np.searchsorted(surviving_points, points[at_pos], side='left')
+            has_one_below = index > 0
+            below = surviving_points[np.clip(index - 1, 0, None)]
+
+            found = at_pos[has_one_below]
+            next_down_sum[found] += below[has_one_below]
+            next_down_runs[found] += 1.0
+
+    if completed == 0:
+        return WaitingCost({name: 0.0 for name in names}, {name: 0.0 for name in names})
+
+    gone = 1.0 - (survived / completed)
+
+    # A player with no projection (kickers, defenses, the unprojected tail) has no
+    # measurable drop-off behind him, and neither does one whose position is so
+    # thin that nothing below him survives. Both score 0 rather than a number
+    # invented to fill the column.
+    measurable = next_down_runs > 0
+    drop = np.zeros(total, dtype=float)
+    np.divide(next_down_sum, next_down_runs, out=drop, where=measurable)
+    drop = np.where(measurable, np.maximum(points - drop, 0.0), 0.0)
+
+    cost = gone * drop
+
+    return WaitingCost(
+        cost={name: float(value) for name, value in zip(names, cost)},
+        gone={name: float(value) for name, value in zip(names, gone)},
+    )
 
 
-def create_vbd_big_board(season: int = 2024, format: str = config.DEFAULT_DRAFT_FORMAT, teams: int = config.DEFAULT_TEAMS) -> pd.DataFrame:
+def create_vbd_big_board(
+    season: int = 2024,
+    format: str = config.DEFAULT_DRAFT_FORMAT,
+    teams: int = config.DEFAULT_TEAMS,
+    scoring: league.ScoringSettings | None = None,
+    roster: league.RosterSettings | None = None,
+) -> pd.DataFrame:
     """
     Creates a VORP-based "big board" for all positions, incorporating ADP data.
-    Kickers and Defenses will be included but will have a VORP of 0.
+
+    `format` still selects the ADP column -- there is no way to derive where the
+    field drafts a player from a scoring table -- but it no longer decides what a
+    player is worth. `scoring` does, and defaults to the format's preset so a
+    caller that passes neither gets exactly the old behaviour.
     """
+    if roster is not None:
+        # One source of truth for the league size. A roster that disagrees with
+        # the `teams` argument is the roster's to win: it is the more specific
+        # thing the caller passed.
+        teams = roster.teams
+    roster_positions = (roster.position_slots() if roster else config.DEFAULT_ROSTER_POS)
+    scoring = scoring if scoring is not None else league.ScoringSettings.for_format(format)
+
     # 1. Load player data from the database
     base_df = data_service.load_player_data()
     if base_df is None or base_df.empty:
@@ -247,7 +344,7 @@ def create_vbd_big_board(season: int = 2024, format: str = config.DEFAULT_DRAFT_
     final_df = base_df.copy()
     for position in base_df['pos'].unique():
         if position in config.VORP_POSITIONS:
-            final_df = calculate_vorp(final_df, position, teams, format)
+            final_df = calculate_vorp(final_df, position, teams, format, roster_positions)
 
     # Sort the final big board by VORP
     final_df.sort_values(by='VORP', ascending=False, inplace=True)

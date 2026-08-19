@@ -27,19 +27,22 @@ DEFAULT_ROUNDS: int = 20
 
 def roster_slots(rounds: int) -> List[str]:
     """
-    Roster slots for a draft of `rounds` rounds: the fixed starting lineup, then
-    exactly enough bench to hold every pick that is not a starter.
+    Roster slots for a *default* league's draft of `rounds` rounds.
 
     The bench has to be sized from the draft, not fixed. A hardcoded eight-slot
     bench meant a 20-round draft had two picks with nowhere to sit -- `add_player`
     tallies them but drops them off the roster panel -- while a 10-round draft
     showed eight bench slots that could never be filled.
 
-    A draft shorter than the starting lineup gets no bench at all and leaves
-    starting slots empty, which is what actually happens in such a league.
+    Leagues can now configure their lineup, so the sizing lives on
+    `league.RosterSettings` and this delegates to it rather than keeping a second
+    copy that could drift. Anything that knows its league should call
+    `RosterSettings.slots` directly; this is for callers that only want the
+    defaults.
     """
-    bench = max(0, rounds - len(DEFAULT_STARTERS))
-    return DEFAULT_STARTERS + [f"BN{i}" for i in range(1, bench + 1)]
+    from backend.league import RosterSettings
+
+    return RosterSettings().slots(rounds)
 
 
 DEFAULT_ROSTER: List[str] = roster_slots(DEFAULT_ROUNDS)

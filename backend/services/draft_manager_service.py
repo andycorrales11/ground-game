@@ -4,7 +4,7 @@ import uuid
 import logging
 
 from backend.services.draft import Draft, Team
-from backend import config
+from backend import config, league
 from backend.services.vbd_service import create_vbd_big_board, calculate_vona_board
 from backend.services.draft_service import get_user_picks
 from backend.services.simulation_service import simulate_cpu_pick, simulate_user_auto_pick
@@ -113,19 +113,20 @@ class DraftManagerService:
         picks_order = session_state["picks_order"]
         slot_to_roster_id = session_state["slot_to_roster_id"]
 
-        vona_results = {}
         available_players = draft_obj.get_available_players().copy()
 
         # Nothing left to value: no board, or no pick of yours left to value it for.
         if available_players.empty or cls._is_complete(session_state):
-            session_state["vona_data"] = vona_results
+            session_state["vona_data"] = {}
+            session_state["gone_data"] = {}
             session_state["vona_computed_for"] = cls._vona_state_key(session_state)
             return
 
-        # Determine picks to simulate for VONA
+        # How many picks stand between now and the user's next turn. That span is
+        # the whole of VONA: it is what the player has to survive to still be
+        # there when the user picks.
         picks_to_simulate = 0
         next_user_pick_num = None # Initialize to None
-        current_user_pick_index = -1 # Initialize to -1
 
         if draft_id:
             # Live mode: find the next pick belonging to the user
@@ -140,24 +141,33 @@ class DraftManagerService:
                 if next_user_pick_index != -1: # Only calculate if a next user pick is found
                     picks_to_simulate = next_user_pick_index - current_pick_num
         else: # Simulation mode
-            # Find the next user pick in simulation
-            try:
-                current_user_pick_index = user_picks_simulation.index(current_pick_num + 1) # +1 because user_picks_simulation is 1-indexed
-            except ValueError:
-                pass # Current pick is not a user pick, so no next user pick in this sequence
-
-            if current_user_pick_index != -1 and (current_user_pick_index + 1) < len(user_picks_simulation):
-                next_user_pick_num = user_picks_simulation[current_user_pick_index + 1]
+            # The first pick of yours that is still ahead of the pick on the clock.
+            # On your turn that is the pick *after* this one, so VONA is the cost
+            # of passing; off-turn it is the turn you are waiting for, and the
+            # picks in between are the ones that can take him.
+            #
+            # This used to look the pick on the clock up in user_picks_simulation
+            # and give up when it was not there, which meant VONA existed only on
+            # the user's own turn -- every other pick left the column a board of
+            # zeroes that the room had to grey out rather than print. Both live
+            # mode and this one now ask the same question, and it is a question
+            # with an answer whoever is on the clock.
+            pick_on_clock = current_pick_num + 1 # user_picks_simulation is 1-indexed
+            next_user_pick_num = next(
+                (pick for pick in user_picks_simulation if pick > pick_on_clock), None
+            )
+            if next_user_pick_num is not None:
                 picks_to_simulate = (next_user_pick_num - 1) - current_pick_num
-            # If no next user pick is found, picks_to_simulate remains 0, which is correct.
+            # No pick of yours left to wait for: picks_to_simulate stays 0, which
+            # calculate_vona_board reads as "waiting costs nothing".
 
         logging.debug(f"VONA Calc Debug: current_pick_num={current_pick_num}, user_picks_simulation={user_picks_simulation}")
-        logging.debug(f"VONA Calc Debug: current_user_pick_index={current_user_pick_index}, next_user_pick_num={next_user_pick_num if next_user_pick_num is not None else 'N/A'}")
+        logging.debug(f"VONA Calc Debug: next_user_pick_num={next_user_pick_num if next_user_pick_num is not None else 'N/A'}")
         logging.info(f"Calculating VONA for {len(available_players)} players, simulating {picks_to_simulate} picks.")
 
         # One shared set of simulations scores the entire board, so there is no
         # longer any reason to cap this at the top 50 by ADP.
-        vona_results = calculate_vona_board(
+        waiting = calculate_vona_board(
             available_players,
             draft_obj,
             teams_list,
@@ -165,7 +175,12 @@ class DraftManagerService:
             current_pick_num,
         )
 
-        session_state["vona_data"] = vona_results
+        # Two readings of the same simulations. The cost is what waiting is worth
+        # in points; the probability is the raw "will he last?" behind it, which is
+        # worth showing on its own -- a big cost driven by a 20% chance of losing
+        # someone is a very different pick than the same cost at 95%.
+        session_state["vona_data"] = waiting.cost
+        session_state["gone_data"] = waiting.gone
         session_state["vona_computed_for"] = cls._vona_state_key(session_state)
 
     @staticmethod
@@ -195,7 +210,9 @@ class DraftManagerService:
         teams: int | None = None,
         rounds: int | None = None,
         format: str | None = None,
-        order: str | None = None
+        order: str | None = None,
+        scoring: Dict[str, Any] | None = None,
+        roster: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         session_id = str(uuid.uuid4())
         logging.info(f"Initializing draft session: {session_id}")
@@ -224,9 +241,24 @@ class DraftManagerService:
             user_picks = get_user_picks(pick_slot, draft_order, draft_teams, draft_rounds)
             logging.info(f"Your simulated picks are at positions: {user_picks}")
 
+        # --- League settings ---
+        # The format is still what picks the ADP column, and seeds the scoring
+        # defaults. Anything the league does differently -- six-point passing
+        # touchdowns, a tight-end premium, a superflex -- comes in here and is
+        # what the board is actually built from.
+        try:
+            league_scoring = league.ScoringSettings.for_format(draft_format).with_overrides(scoring)
+            league_roster = league.RosterSettings.from_payload(teams=draft_teams, roster=roster)
+        except (ValueError, TypeError) as error:
+            logging.error(f"Invalid league settings: {error}")
+            return {"error": f"Invalid league settings: {error}"}
+
         # --- Common Setup ---
         logging.info("Creating big board...")
-        big_board = create_vbd_big_board(format=draft_format, teams=draft_teams)
+        big_board = create_vbd_big_board(
+            format=draft_format, teams=draft_teams,
+            scoring=league_scoring, roster=league_roster,
+        )
         if big_board.empty:
             logging.error("Big board could not be created.")
             return {"error": "Big board could not be created."}
@@ -239,7 +271,7 @@ class DraftManagerService:
         # The bench is sized from the round count. Left at the module default, a
         # 20-round draft had two picks with no slot to sit in and a 10-round draft
         # showed eight bench rows nobody could ever fill.
-        slots = config.roster_slots(draft_rounds)
+        slots = league_roster.slots(draft_rounds)
         draft_obj = Draft(big_board, draft_format, draft_teams, draft_rounds, roster=slots, order=draft_order)
         teams_list = [Team(slots) for _ in range(draft_teams)]
 
@@ -255,7 +287,12 @@ class DraftManagerService:
             "original_big_board": big_board.copy(), # Keep a copy for VONA/VORP calcs
             "picks_order": [], # Will be populated for live drafts
             "slot_to_roster_id": {}, # Will be populated for live drafts
-            "vona_data": {} # Initialize VONA data
+            "vona_data": {}, # Expected points lost by waiting, per player
+            "gone_data": {}, # Probability of being gone by your next turn
+            # The league this board was built for. Kept so anything that
+            # recomputes later values players by the same rules the board did.
+            "scoring": league_scoring,
+            "roster_settings": league_roster,
         }
 
         # Populate live draft specific settings if applicable
@@ -328,10 +365,13 @@ class DraftManagerService:
                 else:
                     on_clock_team_info = {"type": "cpu", "team_index": team_index}
 
-        # Recalculate VONA if it's the user's turn, but only if the board moved --
-        # this endpoint is hit on every filter change and every live-draft poll.
-        if is_user_turn:
-            cls._ensure_vona(session_state)
+        # VONA is worth reading while you wait, not only while you are on the
+        # clock -- off the clock it answers "who is still going to be there when I
+        # pick", which is exactly what you are sitting there wondering. _ensure_vona
+        # is what keeps that affordable: this endpoint is hit on every filter
+        # change and every live-draft poll, and it recomputes only when the board
+        # has actually moved.
+        cls._ensure_vona(session_state)
 
         available_players = draft_obj.get_available_players().copy()
 
@@ -347,6 +387,13 @@ class DraftManagerService:
         # and returned the board in its existing order.
         available_players['VONA'] = (
             available_players['display_name'].map(session_state["vona_data"]).fillna(0.0)
+        )
+        # The chance he is gone before your next turn, 0-1. It is the other half of
+        # VONA and it answers a question VONA cannot on its own: a player can be
+        # worth a lot more than the next man down and still be nearly certain to
+        # last, which is exactly when you should be taking somebody else.
+        available_players['GONE'] = (
+            available_players['display_name'].map(session_state.get("gone_data", {})).fillna(0.0)
         )
 
         # The season projection, under a name the frontend can rely on. The column
@@ -611,7 +658,9 @@ class DraftManagerService:
         teams: int | None = None,
         rounds: int | None = None,
         format: str | None = None,
-        order: str | None = None
+        order: str | None = None,
+        scoring: Dict[str, Any] | None = None,
+        roster: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         return cls.initialize_draft(
             pick_slot,
@@ -620,7 +669,9 @@ class DraftManagerService:
             teams,
             rounds,
             format,
-            order
+            order,
+            scoring,
+            roster,
         )
 
     @classmethod

@@ -33,8 +33,30 @@ class TestMainAPI(unittest.TestCase):
             teams=12,
             rounds=15,
             format='snake',
-            order='regular'
+            order='regular',
+            # Absent from the payload, so the league falls back to whatever the
+            # format implies -- which is exactly what it did before these
+            # existed.
+            scoring=None,
+            roster=None,
         )
+
+    @patch('backend.services.draft_manager_service.DraftManagerService.initialize_draft')
+    def test_start_draft_forwards_league_settings(self, mock_initialize_draft):
+        """Scoring values and roster counts reach the service as given."""
+        mock_initialize_draft.return_value = {'session_id': 'test_session'}
+
+        response = self.client.post("/draft/simulation/start", json={
+            'pick_slot': 1,
+            'format': 'HalfPPR',
+            'scoring': {'pass_tds': 6, 'receptions_te': 1.0},
+            'roster': {'wr': 3, 'flex': 1, 'superflex': 1},
+        })
+
+        self.assertEqual(response.status_code, 200)
+        _, kwargs = mock_initialize_draft.call_args
+        self.assertEqual(kwargs['scoring'], {'pass_tds': 6.0, 'receptions_te': 1.0})
+        self.assertEqual(kwargs['roster'], {'wr': 3, 'flex': 1, 'superflex': 1})
 
     @patch('backend.services.draft_manager_service.DraftManagerService.get_current_draft_state')
     def test_get_draft_state(self, mock_get_current_draft_state):
