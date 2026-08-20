@@ -85,6 +85,52 @@ export interface DraftState {
   */
   teams?: number;
   rounds?: number;
+  /*
+    Picks nobody makes, because the player was kept. Optional on the same rule as
+    `teams`: a backend from before keepers existed does not send it, and a league
+    without them sends an empty list.
+
+    The room needs these to explain its own numbering -- a draft that opens at
+    pick 4 and jumps from 20 to 25 looks broken until you can see why.
+  */
+  keepers?: KeeperPick[];
+}
+
+/** A kept player, named the way the draft sheet reads: round and seat. */
+export interface KeeperPick {
+  round: number;
+  /** The manager's draft slot, not the position within the round. */
+  pick: number;
+  overall: number;
+  player: string;
+  manager: string | null;
+  is_user: boolean;
+}
+
+/** One team's finished roster, for the results table. */
+export interface TeamResult {
+  team_index: number;
+  /** The manager's name where the league named them, otherwise "Team 7". */
+  name: string;
+  is_user: boolean;
+  roster: RosterSlot[];
+  bye_conflicts: Record<string, string[]>;
+  picks_made: number;
+  keepers: string[];
+}
+
+export interface DraftResults {
+  session_id: string;
+  status: string;
+  current_pick_num: number;
+  total_picks: number;
+  /*
+    True in live mode, where Sleeper owns the rosters and only the user's is
+    populated. The table says so rather than rendering eleven empty rosters as
+    though everybody drafted nobody.
+  */
+  rosters_are_partial: boolean;
+  teams: TeamResult[];
 }
 
 export interface LivePick {

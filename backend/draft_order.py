@@ -137,8 +137,16 @@ class PickBook:
         order: DraftOrder,
         owners: Sequence[int] | None = None,
         keepers: Mapping[int, KeptPlayer] | None = None,
+        managers: Mapping[str, int] | None = None,
     ):
         self.order = order
+        # Seat -> the person sitting in it, when the league named them. Kept here
+        # because this is already what resolves a name in a trade, and because a
+        # results table that says "Team 7" when the league calls him Janson is
+        # asking the reader to do the lookup themselves.
+        self._manager_at: Dict[int, str] = {
+            int(slot) - 1: name for name, slot in (managers or {}).items()
+        }
         self._owners: List[int] = (
             list(owners) if owners is not None
             else [order.slot_at(i) - 1 for i in range(order.total_picks)]
@@ -162,7 +170,7 @@ class PickBook:
         originally owned it. `traded_to` is a manager name resolved through
         `slot_of`, or a slot number for a league that never named its managers.
         """
-        book = cls(order)
+        book = cls(order, managers=slot_of)
         seen: Dict[int, Mapping] = {}
 
         for trade in trades:
@@ -190,13 +198,21 @@ class PickBook:
                     f"One pick keeps one player."
                 )
             placed[keeper.pick_index] = keeper
-        return PickBook(self.order, self._owners, placed)
+        return PickBook(self.order, self._owners, placed, self.managers())
 
     # --- reading --------------------------------------------------------------
 
     @property
     def total_picks(self) -> int:
         return self.order.total_picks
+
+    def managers(self) -> Dict[str, int]:
+        """The seat each named manager holds, 1-based -- the form the files use."""
+        return {name: index + 1 for index, name in self._manager_at.items()}
+
+    def manager_name(self, team_index: int) -> str | None:
+        """What the league calls this team, or None if it never said."""
+        return self._manager_at.get(team_index)
 
     def owner_of(self, pick_index: int) -> int:
         """The 0-based team index on the clock at a 0-based pick index."""

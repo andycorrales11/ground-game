@@ -169,4 +169,57 @@ describe('LeagueSettings', () => {
     fireEvent.click(screen.getByLabelText('Custom scoring'));
     expect(screen.getByText('both customised')).toBeInTheDocument();
   });
+
+  /*
+    Lineup presets. A superflex lineup is eight fields to enter by hand, and the
+    one nobody thinks to change -- TE down to zero -- is also the one with no
+    visible symptom when it is wrong: the board looks fine while every tight end
+    is valued against a replacement level that does not exist.
+  */
+  it('sets the whole lineup from a preset, not a diff', () => {
+    const onRoster = jest.fn();
+    render(<Harness onRoster={onRoster} />);
+    open();
+    fireEvent.click(screen.getByLabelText(/custom lineup/i));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Superflex' }));
+
+    expect(onRoster).toHaveBeenLastCalledWith({
+      qb: 1, rb: 2, wr: 2, te: 0, flex: 2, superflex: 1, k: 1, dst: 1,
+    });
+  });
+
+  it('shows which preset the lineup on screen actually is', () => {
+    render(<Harness />);
+    open();
+    fireEvent.click(screen.getByLabelText(/custom lineup/i));
+
+    // The default lineup is the Standard preset.
+    expect(screen.getByRole('button', { name: 'Standard' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Superflex' }));
+    expect(screen.getByRole('button', { name: 'Superflex' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(screen.getByRole('button', { name: 'Standard' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+  });
+
+  it('stops matching a preset once a field is edited by hand', () => {
+    render(<Harness />);
+    open();
+    fireEvent.click(screen.getByLabelText(/custom lineup/i));
+    fireEvent.change(screen.getByLabelText('WR'), { target: { value: '3' } });
+
+    expect(screen.getByRole('button', { name: 'Standard' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+  });
 });

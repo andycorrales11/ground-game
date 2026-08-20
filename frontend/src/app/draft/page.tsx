@@ -25,6 +25,14 @@ export default function StartPage() {
   const [rounds, setRounds] = useState('15');
   const [format, setFormat] = useState('PPR');
   const [order, setOrder] = useState('snake');
+  /*
+    The first round that runs backwards. 2 is a plain snake; a league that drafts
+    its opening rounds in order and only then begins snaking sends the round it
+    turns at. Kept as a string like every other numeric field here so a
+    half-typed value does not become NaN mid-keystroke.
+  */
+  const [snakeFrom, setSnakeFrom] = useState('2');
+  const [useKeepers, setUseKeepers] = useState(true);
 
   /*
     Null means "not customised" -- the backend applies the preset for `format`.
@@ -55,6 +63,12 @@ export default function StartPage() {
         rounds: Number.parseInt(rounds, 10),
         format,
         order,
+        // Only when it is not a plain snake -- the backend owns the default, and
+        // sending 2 explicitly would just be repeating it back.
+        ...(order === 'snake' && snakeFrom !== '2'
+          ? { snake_from: Number.parseInt(snakeFrom, 10) }
+          : {}),
+        ...(useKeepers ? {} : { use_keepers: false }),
         // Omitted entirely when untouched, rather than sent as defaults.
         ...(scoring ? { scoring } : {}),
         ...(roster ? { roster } : {}),
@@ -193,7 +207,48 @@ export default function StartPage() {
                 <option value="normal">Straight</option>
               </select>
             </Field>
+
+            {/*
+              Only meaningful for a snake, so it is hidden for a straight draft
+              rather than sitting there doing nothing.
+            */}
+            {order === 'snake' && (
+              <Field label="Snake turns at round" htmlFor="snakeFrom">
+                <input
+                  id="snakeFrom"
+                  type="number"
+                  min="2"
+                  value={snakeFrom}
+                  onChange={(event) => setSnakeFrom(event.target.value)}
+                  disabled={isProcessing}
+                  className={controlClass}
+                />
+                <p className="mt-1 text-xs text-dim">
+                  2 is a normal snake. Set 4 if the first three rounds run in
+                  order.
+                </p>
+              </Field>
+            )}
           </div>
+
+          <label className="mt-4 flex items-start gap-2.5">
+            <input
+              type="checkbox"
+              checked={useKeepers}
+              onChange={(event) => setUseKeepers(event.target.checked)}
+              disabled={isProcessing}
+              className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-chalk"
+            />
+            <span>
+              <span className="font-display block text-xs font-semibold uppercase tracking-[0.14em] text-chalk">
+                Apply keepers and traded picks
+              </span>
+              <span className="mt-1 block text-xs text-dim">
+                Reads data/keepers.json and data/trades.json. Turn off for a clean
+                mock against the same board.
+              </span>
+            </span>
+          </label>
 
           <LeagueSettings
             presetFormat={format}

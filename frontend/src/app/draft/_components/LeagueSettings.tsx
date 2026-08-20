@@ -5,6 +5,7 @@ import { useId, useState } from 'react';
 import {
   DEFAULT_ROSTER,
   ROSTER_FIELDS,
+  ROSTER_PRESETS,
   SCORING_GROUPS,
   hasStartingSlot,
   receptionsFor,
@@ -91,6 +92,13 @@ function NumberField({
       />
       {hint && <p className="mt-1 text-[11px] text-dim">{hint}</p>}
     </div>
+  );
+}
+
+/** Whether the lineup on screen is exactly one of the named ones. */
+function matchesPreset(roster: RosterCounts, preset: RosterCounts): boolean {
+  return (Object.keys(preset) as (keyof RosterCounts)[]).every(
+    (key) => roster[key] === preset[key],
   );
 }
 
@@ -214,14 +222,34 @@ export default function LeagueSettings({
                   </p>
                 )}
 
-                <button
-                  type="button"
-                  onClick={() => onRosterChange({ ...DEFAULT_ROSTER })}
-                  disabled={disabled}
-                  className="font-display mt-3 text-[11px] uppercase tracking-[0.14em] text-dim transition-colors hover:text-chalk"
-                >
-                  Reset lineup
-                </button>
+                {/*
+                  Presets set the whole lineup, never a diff. A superflex league
+                  is eight fields to enter by hand and one of them -- TE at zero
+                  -- is the field nobody thinks to change, which is also the one
+                  that has no visible symptom when it is wrong.
+                */}
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {ROSTER_PRESETS.map((preset) => {
+                    const active = matchesPreset(roster, preset.roster);
+                    return (
+                      <button
+                        key={preset.label}
+                        type="button"
+                        onClick={() => onRosterChange({ ...preset.roster })}
+                        disabled={disabled}
+                        title={preset.hint}
+                        aria-pressed={active}
+                        className={`font-display border px-2 py-1 text-[11px] uppercase tracking-[0.14em] transition-colors disabled:opacity-40 ${
+                          active
+                            ? 'border-chalk text-chalk'
+                            : 'border-line text-dim hover:border-chalk hover:text-chalk'
+                        }`}
+                      >
+                        {preset.label}
+                      </button>
+                    );
+                  })}
+                </div>
               </>
             )}
           </div>

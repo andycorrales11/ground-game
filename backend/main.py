@@ -110,6 +110,13 @@ async def poll_live_draft(session_id: str):
         raise HTTPException(status_code=400, detail=result["error"])
     return result
 
+@app.get("/draft/simulation/{session_id}/results")
+async def get_draft_results(session_id: str):
+    result = DraftManagerService.get_draft_results(session_id)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
 @app.post("/draft/simulation/{session_id}/calculate-vona")
 async def calculate_vona_endpoint(session_id: str, request: VonaCalculationRequest):
     result = DraftManagerService.calculate_vona_for_display(session_id, request.player_names)
@@ -162,6 +169,13 @@ async def auto_draft_helper_pick(session_id: str):
     result = DraftManagerService.process_auto_pick_helper(session_id)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+@app.get("/draft/helper/{session_id}/results")
+async def get_draft_results_helper(session_id: str):
+    result = DraftManagerService.get_draft_results_helper(session_id)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
     return result
 
 @app.get("/draft/helper/{session_id}/poll-live")

@@ -88,6 +88,8 @@ The frontend mirrors this split, and each mode stays on its own routes end to en
 
 The live room must not offer a CPU-pick button — `process_cpu_pick` returns an error for any session with a `draft_id`.
 
+`GET /draft/*/{id}/results` returns **every** team's roster, not just the user's. It is a separate endpoint rather than a field on the draft state deliberately: it is twelve rosters, and `/state` is re-fetched on every filter change and every live poll. It works mid-draft as well as after — "what has everyone else got" is a question you ask hardest on the clock — and it names teams by manager where the league named them, since a table reading "Team 7" when the league calls him Janson makes the reader do a lookup the backend already did. In live mode it sets `rosters_are_partial`, because Sleeper owns the rosters there and only the user's is populated.
+
 ### Simulation vs. live mode
 
 The branch point is `session_state["draft_id"]`:
@@ -223,6 +225,8 @@ going anywhere and overstate what waiting costs; a traded pick belongs to a
 different roster, so simulating it against the seat's owner reads the wrong
 positional needs.
 
+The room shows keepers in `KeeperPanel`, which exists to explain its own numbering: a keeper draft opens on pick 4 and jumps from 20 to 25, and without somewhere to see why that reads as a bug. It labels picks **round and seat** (`5.10`), matching the keeper file rather than Sleeper.
+
 Live mode has no `PickBook` — Sleeper's `picks_order` is the equivalent, and
 Sleeper already knows who was kept, so applying the files there would count every
 keeper twice. `use_keepers=False` on `/draft/*/start` turns them off for a clean
@@ -236,7 +240,9 @@ mock against the same board.
 
 Three things read the roster and all three must agree: `create_vbd_big_board`, the VONA forward simulation (which recovers the lineup from the `Draft`'s slot names via `league.position_slots_from`), and `Team`. A `Draft` carries slot *names* only, which is why that recovery exists.
 
-The form is `draft/_components/LeagueSettings.tsx`, shared by both entry pages, with the shapes and defaults in `lib/league.ts` mirroring `backend/league.py` field for field.
+The form is `draft/_components/LeagueSettings.tsx`, shared by both entry pages, with the shapes and defaults in `lib/league.ts` mirroring `backend/league.py` field for field. `ROSTER_PRESETS` sets a whole lineup in one click — never a diff, on the same rule as the payload. The superflex preset earns its place because that lineup is the one where a mistake is least visible: the field nobody thinks to change is **TE down to zero**, and nothing on screen looks wrong when it is missed — the tight ends are simply valued against a replacement level that does not exist (see `flex_share`).
+
+Draft order and the keeper toggle live on the simulation entry page rather than in `LeagueSettings`, because a live draft takes both from Sleeper. "Snake turns at round" is hidden entirely for a straight draft, and both fields are omitted from the payload at their defaults so the backend stays the source of truth.
 
 **Both sections are opt-in, and that is a correctness requirement rather than a tidiness one.** A live draft reads its scoring format from Sleeper; a form that always sent a scoring table would silently override a standard-scoring league with whatever preset it happened to be showing. Off sends nothing at all and lets the backend decide. On sends the **whole object** — never a diff against defaults, which would make `lib/league.ts` and `backend/league.py` have to stay in lockstep to avoid scoring the board on values the form never displayed.
 

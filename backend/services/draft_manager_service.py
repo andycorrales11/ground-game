@@ -70,23 +70,24 @@ class DraftManagerService:
     _active_draft_sessions: Dict[str, Dict[str, Any]] = {}
 
     @classmethod
-    def _user_team(cls, session_state: Dict[str, Any]) -> Team | None:
+    def _user_index(cls, session_state: Dict[str, Any]) -> int:
         """
-        The user's own Team, in either mode.
+        Where the user sits in `teams_list`, or -1.
 
-        Simulation indexes teams_list by draft slot; live mode indexes it by roster
-        id, which is the mapping the rest of the live code already assumes.
+        Simulation indexes it by draft slot; live mode indexes it by roster id,
+        which is the mapping the rest of the live code already assumes. This is
+        the one place that knows the difference.
         """
-        teams_list: List[Team] = session_state["teams_list"]
-
         if session_state["draft_id"]:
             user_roster_id = session_state.get("user_roster_id")
-            if not user_roster_id:
-                return None
-            index = int(user_roster_id) - 1
-        else:
-            index = session_state["user_pick_slot"] - 1
+            return int(user_roster_id) - 1 if user_roster_id else -1
+        return session_state["user_pick_slot"] - 1
 
+    @classmethod
+    def _user_team(cls, session_state: Dict[str, Any]) -> Team | None:
+        """The user's own Team, in either mode."""
+        teams_list: List[Team] = session_state["teams_list"]
+        index = cls._user_index(session_state)
         return teams_list[index] if 0 <= index < len(teams_list) else None
 
     @classmethod
@@ -613,6 +614,63 @@ class DraftManagerService:
             "keepers": cls._keeper_rows(session_state),
             "status": "completed" if is_complete else "in_progress"
         }
+
+    @classmethod
+    def get_draft_results(cls, session_id: str) -> Dict[str, Any]:
+        """
+        Every team's roster, not just the user's.
+
+        Its own endpoint rather than a field on the draft state, because it is
+        twelve rosters and the state payload is re-fetched on every filter change
+        and every live poll. It is available during the draft as well as after --
+        "what has everyone else got" is a question you ask most on the clock.
+
+        Teams are named where the league named them. A results table reading
+        "Team 7" when the league calls him Janson makes the reader do a lookup
+        that this already knows the answer to.
+        """
+        session_state = cls._active_draft_sessions.get(session_id)
+        if not session_state:
+            return {"error": "Draft session not found."}
+
+        board = session_state["original_big_board"]
+        teams_list: List[Team] = session_state["teams_list"]
+        pick_book: PickBook = session_state.get("pick_book")
+        user_index = cls._user_index(session_state)
+        draft_obj: Draft = session_state["draft_obj"]
+
+        teams = []
+        for index, team in enumerate(teams_list):
+            roster, conflicts = _roster_and_conflicts(team, board)
+            name = pick_book.manager_name(index) if pick_book is not None else None
+            teams.append({
+                "team_index": index,
+                "name": name or f"Team {index + 1}",
+                "is_user": index == user_index,
+                "roster": roster,
+                "bye_conflicts": conflicts,
+                "picks_made": team.picks_made,
+                "keepers": [
+                    keeper.player for keeper in pick_book.keepers_for(index)
+                ] if pick_book is not None else [],
+            })
+
+        return {
+            "session_id": session_id,
+            "status": "completed" if cls._is_complete(session_state) else "in_progress",
+            "current_pick_num": min(
+                session_state["current_pick_num"] + 1, draft_obj.rounds * draft_obj.teams
+            ),
+            "total_picks": draft_obj.rounds * draft_obj.teams,
+            # Live mode populates only the user's roster -- Sleeper owns the rest --
+            # so the room can say so rather than rendering eleven empty tables.
+            "rosters_are_partial": bool(session_state["draft_id"]),
+            "teams": teams,
+        }
+
+    @classmethod
+    def get_draft_results_helper(cls, session_id: str) -> Dict[str, Any]:
+        return cls.get_draft_results(session_id)
 
     @classmethod
     def process_user_pick(cls, session_id: str, player_name: str) -> Dict[str, Any]:

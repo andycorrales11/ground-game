@@ -16,9 +16,11 @@ import type { DraftMode, DraftState, LivePick, Player } from '@/lib/types';
 
 import BoardFilters from './BoardFilters';
 import ClockRail from './ClockRail';
+import KeeperPanel from './KeeperPanel';
 import PickBar from './PickBar';
 import PlayerBoard from './PlayerBoard';
 import RecentPicks from './RecentPicks';
+import ResultsBoard from './ResultsBoard';
 import RosterPanel from './RosterPanel';
 import ScarcityStrip from './ScarcityStrip';
 
@@ -102,6 +104,13 @@ export default function DraftRoom({ mode }: Props) {
   const [recentPicks, setRecentPicks] = useState<LivePick[]>([]);
   const [lastSync, setLastSync] = useState<Date | null>(null);
 
+  /*
+    The all-teams table. `resultsKey` is bumped whenever the board moves, so a
+    table left open refreshes instead of going stale behind you.
+  */
+  const [showResults, setShowResults] = useState(false);
+  const [resultsKey, setResultsKey] = useState(0);
+
   const queryInputRef = useRef<HTMLInputElement | null>(null);
 
   /*
@@ -115,6 +124,7 @@ export default function DraftRoom({ mode }: Props) {
     try {
       const data = await fetchDraftState(mode, sessionId, { positionFilter, sortBy });
       setDraftState(data);
+      setResultsKey((key) => key + 1);
       setError(null);
     } catch (err) {
       setError(errorMessage(err, 'Could not load the draft board.'));
@@ -355,7 +365,7 @@ export default function DraftRoom({ mode }: Props) {
     ? Math.floor((draftState.current_pick_num - 1) / draftState.teams) + 1
     : null;
 
-  const showSimulateButton = config.canSimulateCpu && !isUserTurn && !isComplete;
+  const showSimulateButton = config.canSimulateCpu && !isUserTurn && !isComplete && !showResults;
 
   return (
     <div className="min-h-screen bg-pitch">
@@ -379,6 +389,18 @@ export default function DraftRoom({ mode }: Props) {
             {isBusy ? 'Working' : 'Simulate next pick'}
           </button>
         )}
+        <button
+          type="button"
+          onClick={() => setShowResults(!showResults)}
+          aria-pressed={showResults}
+          className={`font-display border px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] transition-colors ${
+            showResults || isComplete
+              ? 'border-chalk text-chalk hover:bg-line'
+              : 'border-line text-chalk hover:bg-line'
+          }`}
+        >
+          {showResults ? 'Board' : isComplete ? 'See results' : 'All teams'}
+        </button>
         {config.polls && (
           <button
             type="button"
@@ -396,6 +418,16 @@ export default function DraftRoom({ mode }: Props) {
         )}
       </ClockRail>
 
+      {showResults ? (
+        <main className="mx-auto max-w-[1600px] px-4 py-4">
+          <ResultsBoard
+            mode={mode}
+            sessionId={sessionId}
+            refreshKey={resultsKey}
+            onClose={() => setShowResults(false)}
+          />
+        </main>
+      ) : (
       <main className="mx-auto grid max-w-[1600px] gap-4 px-4 py-4 xl:grid-cols-[minmax(0,1fr)_340px]">
         <section className="border border-line bg-deck">
           <BoardFilters
@@ -443,8 +475,10 @@ export default function DraftRoom({ mode }: Props) {
         <aside className="space-y-4">
           <RosterPanel roster={draftState.user_roster} byeConflicts={draftState.bye_conflicts} />
           {config.polls && <RecentPicks picks={recentPicks} lastSync={lastSync} />}
+          <KeeperPanel keepers={draftState.keepers ?? []} />
         </aside>
       </main>
+      )}
     </div>
   );
 }

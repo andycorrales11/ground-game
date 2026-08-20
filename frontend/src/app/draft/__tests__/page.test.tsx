@@ -102,4 +102,55 @@ describe('StartPage', () => {
     // Caught here rather than as a 400 after the round trip.
     expect(screen.getByRole('button', { name: /start mock draft/i })).toBeDisabled();
   });
+
+  /*
+    Draft order. A league that runs its opening rounds straight and only then
+    begins snaking is a real format, and the round it turns at is the only thing
+    that separates it from a plain snake -- so getting it wrong misnumbers every
+    pick from round two on while looking entirely normal.
+  */
+  it('omits the snake turn when it is a plain snake', async () => {
+    openForm();
+    submit();
+
+    await waitFor(() => expect(mockStart).toHaveBeenCalled());
+    // Not sent as 2: the backend owns the default, same rule as the overrides.
+    expect(mockStart.mock.calls[0][0]).not.toHaveProperty('snake_from');
+  });
+
+  it('sends the snake turn when the draft turns later than round two', async () => {
+    openForm();
+    fireEvent.change(screen.getByLabelText(/snake turns at round/i), {
+      target: { value: '4' },
+    });
+    submit();
+
+    await waitFor(() => expect(mockStart).toHaveBeenCalled());
+    expect(mockStart.mock.calls[0][0]).toMatchObject({ snake_from: 4 });
+  });
+
+  it('hides the snake turn for a straight draft, where it means nothing', () => {
+    openForm();
+    fireEvent.change(screen.getByLabelText(/draft order/i), { target: { value: 'normal' } });
+
+    expect(screen.queryByLabelText(/snake turns at round/i)).not.toBeInTheDocument();
+  });
+
+  it('applies the league keeper files by default', async () => {
+    openForm();
+    submit();
+
+    await waitFor(() => expect(mockStart).toHaveBeenCalled());
+    // On by default, so nothing is sent -- the backend owns the default.
+    expect(mockStart.mock.calls[0][0]).not.toHaveProperty('use_keepers');
+  });
+
+  it('turns keepers off for a clean mock against the same board', async () => {
+    openForm();
+    fireEvent.click(screen.getByLabelText(/apply keepers and traded picks/i));
+    submit();
+
+    await waitFor(() => expect(mockStart).toHaveBeenCalled());
+    expect(mockStart.mock.calls[0][0]).toMatchObject({ use_keepers: false });
+  });
 });

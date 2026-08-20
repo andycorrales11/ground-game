@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 import type { RosterCounts, ScoringSettings } from './league';
-import type { DraftMode, DraftState, LivePick } from './types';
+import type { DraftMode, DraftResults, DraftState, LivePick } from './types';
 
 /*
   127.0.0.1, not localhost, and deliberately so.
@@ -65,6 +65,21 @@ export async function fetchDraftState(
   return data;
 }
 
+/**
+ * Every team's roster, not just yours.
+ *
+ * Separate from the draft state deliberately: it is twelve rosters, and the
+ * state call runs on every filter change and every live poll. Fetch it when
+ * somebody asks to look.
+ */
+export async function fetchResults(
+  mode: DraftMode,
+  sessionId: string,
+): Promise<DraftResults> {
+  const { data } = await client.get<DraftResults>(`${ROUTE_BASE[mode]}/${sessionId}/results`);
+  return data;
+}
+
 /*
   The name goes through normalize_name on the way in, so the display name off a
   board row is exactly what this wants -- no client-side normalisation, and no
@@ -108,6 +123,15 @@ export interface SimulationSettings extends LeagueOverrides {
   pick_slot: number;
   teams: number;
   rounds: number;
+  /*
+    The first round that runs backwards. 2 is a plain snake and is the backend's
+    default; a league that drafts its first three rounds in order and snakes from
+    the fourth sends 4. Omitted rather than sent as 2, on the same rule as the
+    league overrides: the backend owns the default.
+  */
+  snake_from?: number;
+  /** Whether to apply the league's keeper and traded-pick files. */
+  use_keepers?: boolean;
   format: string;
   order: string;
 }

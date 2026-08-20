@@ -96,6 +96,36 @@ export const DEFAULT_ROSTER: RosterCounts = {
   dst: 1,
 };
 
+/*
+  Named lineups, so a league that is not the default is one click rather than
+  eight number fields. These are whole `RosterCounts`, not diffs -- the same rule
+  the payload follows, and for the same reason: what is on screen is exactly what
+  the board gets built from.
+
+  A superflex lineup with no TE slot is a real format and worth having here,
+  because it is the one where getting the lineup wrong is least visible. Nothing
+  on screen looks off; the tight ends are just quietly valued against a
+  replacement level that does not exist.
+*/
+export interface RosterPreset {
+  label: string;
+  hint: string;
+  roster: RosterCounts;
+}
+
+export const ROSTER_PRESETS: RosterPreset[] = [
+  {
+    label: 'Standard',
+    hint: '1QB · 2RB · 2WR · TE · 2FLEX',
+    roster: DEFAULT_ROSTER,
+  },
+  {
+    label: 'Superflex',
+    hint: '1QB · 2RB · 2WR · 2FLEX · SF',
+    roster: { qb: 1, rb: 2, wr: 2, te: 0, flex: 2, superflex: 1, k: 1, dst: 1 },
+  },
+];
+
 export interface ScoringField {
   key: keyof ScoringSettings;
   label: string;
