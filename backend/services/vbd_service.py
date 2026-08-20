@@ -305,6 +305,43 @@ def calculate_vona_board(
     )
 
 
+# The board's ADP column when the lineup starts two quarterbacks. Written by
+# backend/ingest/ingest_to_db.py; see the ingest notes in CLAUDE.md for why it is
+# a column of its own rather than a fourth scoring format.
+SUPERFLEX_ADP_COLUMN = 'superflex_adp'
+
+
+def _superflex_adp(base_df: pd.DataFrame, format_adp: pd.Series) -> pd.Series:
+    """
+    ADP for a superflex lineup: the superflex column where it exists, the format
+    column where it does not.
+
+    The export covers the top 270 players, which leaves kickers, defenses and the
+    deep pool on the format column. That mixes two scales, and the mixing is
+    deliberate -- an earlier version rescaled the uncovered players onto the
+    superflex scale by measuring the drift between the two columns, and it was
+    wrong for a specific reason worth writing down.
+
+    **The superflex export lists no kickers and no defenses at all.** So the drift
+    measured across covered players partly reflects those ~35 slots being absent
+    from that list, which pulls everyone else's superflex number down relative to
+    their format number. Applying that drift to a kicker corrects him with a
+    figure derived from his own absence. On the real 2026 board it read as +14 at
+    ADP 110 and -3 at ADP 160, a pattern with no physical meaning behind it.
+
+    Left alone, the seam costs very little. A kicker or defense is drafted on
+    roster-slot timing rather than on scarcity -- you take one in the last rounds
+    whatever the format -- so their format ADP is already about the right absolute
+    pick, and `simulation_service._apply_late_round_penalty` overrides it by a
+    factor of 50 regardless. Everyone else uncovered sits past ADP 270, which is
+    beyond the end of a 20-round draft in a 12-team league.
+
+    A player with no ADP in either column keeps NaN and goes on sorting last.
+    """
+    superflex = pd.to_numeric(base_df[SUPERFLEX_ADP_COLUMN], errors='coerce')
+    return superflex.where(superflex.notna(), pd.to_numeric(format_adp, errors='coerce'))
+
+
 def _apply_engine_projections(
     board: pd.DataFrame, points_col: str, scoring: league.ScoringSettings
 ) -> pd.DataFrame:
@@ -403,6 +440,29 @@ def create_vbd_big_board(
     else:
         logging.warning(f"ADP column for format '{format}' not found. ADP values will be missing.")
         base_df['ADP'] = None
+
+    # A superflex lineup drafts off a different board, and this is the only place
+    # that difference enters: ADP is 90% of the CPU's draft score, so it is what
+    # makes simulated opponents take quarterbacks like a superflex league instead
+    # of leaving them for round 10.
+    if roster is not None and roster.superflex:
+        if SUPERFLEX_ADP_COLUMN in base_df.columns:
+            covered = int(
+                pd.to_numeric(base_df[SUPERFLEX_ADP_COLUMN], errors='coerce').notna().sum()
+            )
+            base_df['ADP'] = _superflex_adp(base_df, base_df['ADP'])
+            logging.info(
+                "Superflex lineup: %d player(s) on superflex ADP, %d left on %s "
+                "(kickers, defenses and the deep pool the export omits).",
+                covered, int(base_df['ADP'].notna().sum()) - covered, adp_column,
+            )
+        else:
+            logging.warning(
+                "The lineup has a superflex slot but the players table has no '%s' "
+                "column, so the board is using %s ADP -- quarterbacks will look far "
+                "cheaper than they are. Re-run: python -m backend.ingest.ingest_to_db",
+                SUPERFLEX_ADP_COLUMN, format,
+            )
 
     # Rename the format-specific projection column to the generic 'fantasy_points' name expected by VORP calculation
     fantasy_points_col = utils.points_column(format)

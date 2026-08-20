@@ -257,6 +257,10 @@ It is the one ADP file that is **optional**. `_resolve_adp_file(required=False)`
 
 `ingest_data` runs `ALTER TABLE players ADD COLUMN IF NOT EXISTS superflex_adp` before the COPY. It is idempotent, and it is there so an older database does not need anyone to remember a migration on the morning of a draft.
 
+**The lineup selects it, not the format.** `create_vbd_big_board` swaps `ADP` to `superflex_adp` when `roster.superflex` is non-zero, and that one line is the whole of the format's effect on CPU behavior — `simulate_cpu_pick` blends VORP and ADP rank 10/90, so ADP is what decides whether the simulated opponents take quarterbacks like a superflex league or leave them until round 10. A players table with no such column drafts on the format column and logs a warning naming the ingest command; it must not fail, but it must not be quiet either, because a superflex room running on PPR ADP makes quarterbacks look free.
+
+**The uncovered players keep the format column, deliberately.** An earlier version rescaled them onto the superflex scale by measuring the drift between the two columns across the players both cover. Do not reinstate it. **The superflex export lists no kickers and no defenses**, so that drift partly measures their own absence from the list, and applying it to a kicker corrects him with a figure derived from the fact that he is not there — on the real 2026 board it read as +14 at ADP 110 and −3 at ADP 160, a shape with nothing behind it. It also inverted the order of the players it mapped, because the anchors are jagged (Seattle's defense at PPR 124.8 landed ahead of the Rams' at 119.6). The seam costs little: K and DEF are drafted on roster-slot timing rather than scarcity, so their format ADP is already about the right absolute pick and `_apply_late_round_penalty` overrides it by a factor of 50 regardless, and everyone else uncovered sits past ADP 270 — beyond the end of a 20-round draft in a 12-team league.
+
 Season values are still hardcoded in the unused parquet pipeline: `ingest_stats.py` defaults to `season=2024` and `ingest_adp.py` hardcodes `FantasyPros_2025_*`.
 
 ### Ingest invariants
