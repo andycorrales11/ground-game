@@ -117,10 +117,17 @@ def calculate_draft_score(players: pd.DataFrame) -> pd.DataFrame:
         
     return players
 
-def simulate_cpu_pick(available_players: pd.DataFrame, team: Team, total_rounds: int) -> str:
+def simulate_cpu_pick(available_players: pd.DataFrame, team: Team, total_rounds: int,
+                      picks_remaining: int | None = None) -> str:
     """
     Simulates a CPU pick using a balanced approach of Best Player Available (BPA),
     positional need, and positional scarcity.
+
+    `picks_remaining` is how many picks this team still has to make. It defaults
+    to `total_rounds - team.picks_made`, which is only the same thing in a league
+    where nobody trades picks: a manager who traded three away has twelve in a
+    fifteen-round draft, and on the derived count never reaches the last-rounds
+    window that makes a team fill its kicker and defense slots.
     """
     # 1. Calculate draft_score for all available players to establish a BPA baseline.
     players = calculate_draft_score(available_players)
@@ -138,7 +145,9 @@ def simulate_cpu_pick(available_players: pd.DataFrame, team: Team, total_rounds:
 
     # K and DEF are starting slots too, so the bonus above actively pulls them
     # forward. Hold them back until the bench is nearly full.
-    _apply_late_round_penalty(players, 'draft_score', team, total_rounds - team.picks_made)
+    if picks_remaining is None:
+        picks_remaining = total_rounds - team.picks_made
+    _apply_late_round_penalty(players, 'draft_score', team, picks_remaining)
 
     # Scarcity Bonus
     scarcity = calculate_positional_scarcity(players)
@@ -169,9 +178,13 @@ def simulate_cpu_pick(available_players: pd.DataFrame, team: Team, total_rounds:
 
     return np.random.choice(choices, p=probabilities)
 
-def simulate_user_auto_pick(available_players: pd.DataFrame, team: Team, total_rounds: int) -> str:
+def simulate_user_auto_pick(available_players: pd.DataFrame, team: Team, total_rounds: int,
+                            picks_remaining: int | None = None) -> str:
     """
     Simulates a user's auto-pick using a VONA-enhanced hybrid score.
+
+    `picks_remaining` as in `simulate_cpu_pick`: a team that traded picks away has
+    fewer than the round count implies.
     """
     if available_players.empty:
         return "No players available"
@@ -198,8 +211,9 @@ def simulate_user_auto_pick(available_players: pd.DataFrame, team: Team, total_r
         needed_indices = players[players['pos'].isin(starting_needs)].index
         players.loc[needed_indices, 'auto_pick_score'] *= 0.75
 
-    _apply_late_round_penalty(players, 'auto_pick_score', team,
-                              total_rounds - team.picks_made)
+    if picks_remaining is None:
+        picks_remaining = total_rounds - team.picks_made
+    _apply_late_round_penalty(players, 'auto_pick_score', team, picks_remaining)
 
     # Scarcity Bonus
     scarcity = calculate_positional_scarcity(players)

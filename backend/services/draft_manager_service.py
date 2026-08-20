@@ -4,9 +4,9 @@ import uuid
 import logging
 
 from backend.services.draft import Draft, Team
-from backend import config, league
+from backend import config, league, keepers as keeper_files
+from backend.draft_order import DraftOrder, PickBook, PLAIN_SNAKE_FROM
 from backend.services.vbd_service import create_vbd_big_board, calculate_vona_board
-from backend.services.draft_service import get_user_picks
 from backend.services.simulation_service import simulate_cpu_pick, simulate_user_auto_pick
 from backend.services import sleeper_service, data_service
 from backend.utils import normalize_name, normalize_scoring_format, points_column
@@ -127,6 +127,7 @@ class DraftManagerService:
         # there when the user picks.
         picks_to_simulate = 0
         next_user_pick_num = None # Initialize to None
+        upcoming_owners = None    # Simulation mode only; live mode has no pick book
 
         if draft_id:
             # Live mode: find the next pick belonging to the user
@@ -157,7 +158,17 @@ class DraftManagerService:
                 (pick for pick in user_picks_simulation if pick > pick_on_clock), None
             )
             if next_user_pick_num is not None:
-                picks_to_simulate = (next_user_pick_num - 1) - current_pick_num
+                # The picks actually made between here and your turn, as a
+                # sequence of teams rather than a count. Both halves matter now
+                # that a league has keepers: a kept pick in the span is already
+                # made, so simulating it would drain a player who is not going
+                # anywhere, and a traded pick belongs to a different roster, so
+                # simulating it against the wrong team reads the wrong needs.
+                pick_book: PickBook = session_state["pick_book"]
+                upcoming_owners = pick_book.open_picks_between(
+                    current_pick_num, next_user_pick_num - 1
+                )
+                picks_to_simulate = len(upcoming_owners)
             # No pick of yours left to wait for: picks_to_simulate stays 0, which
             # calculate_vona_board reads as "waiting costs nothing".
 
@@ -173,6 +184,7 @@ class DraftManagerService:
             teams_list,
             picks_to_simulate,
             current_pick_num,
+            pick_owners=upcoming_owners,
         )
 
         # Two readings of the same simulations. The cost is what waiting is worth
@@ -201,6 +213,116 @@ class DraftManagerService:
             return
         cls._calculate_and_store_vona(session_state)
 
+    @staticmethod
+    def _build_pick_book(
+        teams: int, rounds: int, order: str, snake_from: int | None,
+        big_board: pd.DataFrame, use_keepers: bool,
+    ) -> PickBook:
+        """
+        Who owns every pick, and which are already spent.
+
+        Built even when the league has no keepers and no trades, because it is
+        also what replaced the snake arithmetic: one lookup table instead of the
+        same `current_round % 2` reimplemented in four places, none of which could
+        express a traded pick or a draft that starts snaking anywhere but round 2.
+
+        `snake_from` is the first round that runs backwards -- 2 is a plain snake
+        and is the default, so a league that says nothing drafts exactly as before.
+        """
+        draft_order = (
+            DraftOrder.straight(teams, rounds) if order != 'snake'
+            else DraftOrder(teams, rounds, snake_from or PLAIN_SNAKE_FROM)
+        )
+
+        book = (
+            keeper_files.load(config.DATA_DIR) if use_keepers
+            else keeper_files.LeagueBook()
+        )
+        if book:
+            logging.info("League files: %s.", book.describe())
+
+        board_names = dict(zip(big_board['normalized_name'], big_board['display_name']))
+        return keeper_files.build_pick_book(draft_order, book, board_names)
+
+    @staticmethod
+    def _seat_keepers(draft_obj: Draft, teams_list: List[Team], pick_book: PickBook) -> None:
+        """
+        Puts every kept player on his roster before the draft opens.
+
+        All of them at once, rather than each when its pick comes round, because
+        that is what is actually true: everybody knows who is kept, so none of
+        them is available at pick one and no valuation should pretend otherwise.
+        It also lands `Team.picks_made` on the right number from the start, which
+        is what the CPU's endgame logic reads.
+        """
+        for keeper in pick_book.keepers():
+            pos = draft_obj.draft_player(keeper.normalized_name)
+            if not pos:
+                # build_pick_book already rejected anything off the board, so this
+                # is only reachable if two keepers named the same player.
+                logging.warning("Keeper %s could not be seated.", keeper.player)
+                continue
+            teams_list[keeper.team_index].add_player(
+                keeper.normalized_name, pos, draft_obj.player_bye(keeper.normalized_name)
+            )
+
+    @classmethod
+    def _keeper_rows(cls, session_state: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Every kept player, as the draft sheet reads: round, seat, and who has him."""
+        pick_book: PickBook = session_state.get("pick_book")
+        if pick_book is None:
+            return []
+
+        user_index = session_state["user_pick_slot"] - 1
+        order = pick_book.order
+        return [
+            {
+                "round": order.round_of(keeper.pick_index),
+                "pick": order.slot_at(keeper.pick_index),
+                "overall": keeper.pick_index + 1,
+                "player": keeper.player,
+                "manager": keeper.manager,
+                "is_user": keeper.team_index == user_index,
+            }
+            for keeper in pick_book.keepers()
+        ]
+
+    @classmethod
+    def _team_on_clock(cls, session_state: Dict[str, Any]) -> int:
+        """
+        The 0-based index into `teams_list` of whoever is picking, in either mode.
+
+        One place. This was the snake calculation, copied into
+        `get_current_draft_state`, `process_user_pick`, `process_cpu_pick` and
+        `process_auto_pick_helper` -- and a copy of a formula cannot represent a
+        pick that changed hands, nor a draft that starts snaking anywhere but
+        round two.
+
+        Live mode indexes `teams_list` by roster id rather than by seat, which is
+        the other thing the copies got wrong: `process_auto_pick_helper` used the
+        snake index against a live draft, so any league whose roster ids are not
+        in seat order auto-picked onto somebody else's roster.
+        """
+        if session_state["draft_id"]:
+            picks_order = session_state["picks_order"]
+            index = session_state["current_pick_num"]
+            if not 0 <= index < len(picks_order):
+                return -1
+            roster_id = session_state["slot_to_roster_id"].get(str(picks_order[index]))
+            return int(roster_id) - 1 if roster_id else -1
+
+        pick_book: PickBook = session_state["pick_book"]
+        return pick_book.owner_of(session_state["current_pick_num"])
+
+    @classmethod
+    def _advance_clock(cls, session_state: Dict[str, Any]) -> None:
+        """Moves to the next pick somebody actually makes, stepping over keepers."""
+        pick_book: PickBook = session_state.get("pick_book")
+        nxt = session_state["current_pick_num"] + 1
+        session_state["current_pick_num"] = (
+            pick_book.next_open_pick(nxt) if pick_book is not None else nxt
+        )
+
     @classmethod
     def initialize_draft(
         cls,
@@ -213,6 +335,8 @@ class DraftManagerService:
         order: str | None = None,
         scoring: Dict[str, Any] | None = None,
         roster: Dict[str, Any] | None = None,
+        snake_from: int | None = None,
+        use_keepers: bool = True,
     ) -> Dict[str, Any]:
         session_id = str(uuid.uuid4())
         logging.info(f"Initializing draft session: {session_id}")
@@ -238,8 +362,10 @@ class DraftManagerService:
             draft_rounds = rounds or config.DEFAULT_ROUNDS
             draft_format = normalize_scoring_format(format, default=config.DEFAULT_DRAFT_FORMAT)
             draft_order = order or 'snake'
-            user_picks = get_user_picks(pick_slot, draft_order, draft_teams, draft_rounds)
-            logging.info(f"Your simulated picks are at positions: {user_picks}")
+            # Deferred: which picks are yours depends on the traded ones and on
+            # which are already spent on keepers, and resolving keepers needs the
+            # board. Built below, once there is one.
+            user_picks = []
 
         # --- League settings ---
         # The format is still what picks the ADP column, and seeds the scoring
@@ -275,6 +401,29 @@ class DraftManagerService:
         draft_obj = Draft(big_board, draft_format, draft_teams, draft_rounds, roster=slots, order=draft_order)
         teams_list = [Team(slots) for _ in range(draft_teams)]
 
+        # --- Keepers and traded picks ---
+        # Simulation only. A live draft gets its picks from Sleeper, which already
+        # knows who was kept, so applying them here as well would count them twice.
+        pick_book = None
+        if not draft_id:
+            try:
+                pick_book = cls._build_pick_book(
+                    draft_teams, draft_rounds, draft_order, snake_from,
+                    big_board, use_keepers,
+                )
+            except (ValueError, KeyError, IndexError) as error:
+                # Refusing to start is the point. A keeper that silently fails to
+                # apply leaves the player on the board *and* leaves his pick live,
+                # and both errors compound quietly for the rest of the draft.
+                logging.error("Could not apply the league's keepers: %s", error)
+                return {"error": f"Could not apply the league's keepers: {error}"}
+
+            cls._seat_keepers(draft_obj, teams_list, pick_book)
+            keeper_files.log_pick_book(pick_book)
+
+            user_picks = pick_book.picks_for(pick_slot - 1)
+            logging.info(f"Your picks are at positions: {user_picks}")
+
         # Store the draft state
         session_state = {
             "draft_obj": draft_obj,
@@ -293,7 +442,16 @@ class DraftManagerService:
             # recomputes later values players by the same rules the board did.
             "scoring": league_scoring,
             "roster_settings": league_roster,
+            # Who owns each pick and which are already spent on keepers. None in
+            # live mode, where Sleeper's picks_order is the equivalent.
+            "pick_book": pick_book,
         }
+
+        # The clock never rests on a pick nobody makes. Every keeper is already
+        # applied, so if the draft opens on one -- and with a keeper at 1.01 it
+        # does -- the first live pick is further down the board.
+        if pick_book is not None:
+            session_state["current_pick_num"] = pick_book.next_open_pick(0)
 
         # Populate live draft specific settings if applicable
         if draft_id:
@@ -353,11 +511,7 @@ class DraftManagerService:
                     on_clock_team_info = {"type": "cpu", "roster_id": on_clock_roster_id}
             else:
                 # Simulation mode logic
-                current_round = (current_pick_num) // draft_obj.teams + 1
-                if draft_obj.order == 'snake' and current_round % 2 == 0:
-                    team_index = draft_obj.teams - ((current_pick_num) % draft_obj.teams) - 1
-                else:
-                    team_index = (current_pick_num) % draft_obj.teams
+                team_index = cls._team_on_clock(session_state)
 
                 if (current_pick_num + 1) in user_picks_simulation: # +1 because current_pick_num is 0-indexed
                     is_user_turn = True
@@ -453,6 +607,10 @@ class DraftManagerService:
             # {week: [player, ...]} for weeks that would sideline two or more of the
             # user's players at once.
             "bye_conflicts": bye_conflicts,
+            # The picks nobody makes. The room needs these to explain a draft
+            # that opens at pick 4 and jumps from 20 to 25 -- without them the
+            # numbering looks broken rather than kept.
+            "keepers": cls._keeper_rows(session_state),
             "status": "completed" if is_complete else "in_progress"
         }
 
@@ -482,12 +640,8 @@ class DraftManagerService:
                 team_index = int(user_roster_id) - 1
         else:
             # Simulation mode
-            current_round = (current_pick_num) // draft_obj.teams + 1
-            if draft_obj.order == 'snake' and current_round % 2 == 0:
-                team_index = draft_obj.teams - ((current_pick_num) % draft_obj.teams) - 1
-            else:
-                team_index = (current_pick_num) % draft_obj.teams
-        
+            team_index = cls._team_on_clock(session_state)
+
         if team_index == -1:
             return {"error": "Could not determine current team for pick."}
 
@@ -498,7 +652,7 @@ class DraftManagerService:
 
         if pos:
             current_team.add_player(normalized_player_name, pos, draft_obj.player_bye(normalized_player_name))
-            session_state["current_pick_num"] += 1
+            cls._advance_clock(session_state)
             logging.info(f"User drafted: {player_name} ({pos})")
             cls._calculate_and_store_vona(session_state) # Recalculate VONA after pick
             return {
@@ -530,25 +684,28 @@ class DraftManagerService:
         if cls._is_complete(session_state):
             return {"error": "The draft is complete.", "status": "completed"}
 
-        current_round = (current_pick_num) // draft_obj.teams + 1
-        if draft_obj.order == 'snake' and current_round % 2 == 0:
-            team_index = draft_obj.teams - ((current_pick_num) % draft_obj.teams) - 1
-        else:
-            team_index = (current_pick_num) % draft_obj.teams
-        
+        team_index = cls._team_on_clock(session_state)
         current_team = teams_list[team_index]
         available_players = draft_obj.get_available_players()
 
         if available_players.empty:
             return {"message": "No more players available for CPU pick.", "status": "completed"}
 
-        cpu_pick_name = simulate_cpu_pick(available_players, current_team, draft_obj.rounds)
+        # Its *own* remaining picks, not `rounds - picks_made`. A manager who
+        # traded three away has twelve in a fifteen-round draft, and on the old
+        # count never reached the window where the CPU fills its kicker and
+        # defense slots -- so it finished the draft without either.
+        pick_book: PickBook = session_state["pick_book"]
+        cpu_pick_name = simulate_cpu_pick(
+            available_players, current_team, draft_obj.rounds,
+            picks_remaining=pick_book.picks_remaining(team_index, current_pick_num),
+        )
         pos = draft_obj.draft_player(normalize_name(cpu_pick_name))
 
         if pos:
             normalized_cpu_name = normalize_name(cpu_pick_name)
             current_team.add_player(normalized_cpu_name, pos, draft_obj.player_bye(normalized_cpu_name))
-            session_state["current_pick_num"] += 1
+            cls._advance_clock(session_state)
             logging.info(f"CPU (Team {team_index + 1}) drafted: {cpu_pick_name} ({pos}).")
             cls._calculate_and_store_vona(session_state) # Recalculate VONA after pick
             return {
@@ -661,6 +818,8 @@ class DraftManagerService:
         order: str | None = None,
         scoring: Dict[str, Any] | None = None,
         roster: Dict[str, Any] | None = None,
+        snake_from: int | None = None,
+        use_keepers: bool = True,
     ) -> Dict[str, Any]:
         return cls.initialize_draft(
             pick_slot,
@@ -672,6 +831,8 @@ class DraftManagerService:
             order,
             scoring,
             roster,
+            snake_from,
+            use_keepers,
         )
 
     @classmethod
@@ -699,11 +860,9 @@ class DraftManagerService:
         teams_list: List[Team] = session_state["teams_list"]
         current_pick_num = session_state["current_pick_num"]
 
-        current_round = (current_pick_num) // draft_obj.teams + 1
-        if draft_obj.order == 'snake' and current_round % 2 == 0:
-            team_index = draft_obj.teams - ((current_pick_num) % draft_obj.teams) - 1
-        else:
-            team_index = (current_pick_num) % draft_obj.teams
+        team_index = cls._team_on_clock(session_state)
+        if team_index == -1:
+            return {"error": "Could not determine current team for pick."}
 
         current_team = teams_list[team_index]
         available_players = draft_obj.get_available_players().copy()
@@ -719,13 +878,20 @@ class DraftManagerService:
             available_players['display_name'].map(session_state["vona_data"]).fillna(0.0)
         )
 
-        player_name = simulate_user_auto_pick(available_players, current_team, draft_obj.rounds)
+        pick_book: PickBook = session_state.get("pick_book")
+        player_name = simulate_user_auto_pick(
+            available_players, current_team, draft_obj.rounds,
+            picks_remaining=(
+                pick_book.picks_remaining(team_index, current_pick_num)
+                if pick_book is not None else None
+            ),
+        )
         pos = draft_obj.draft_player(normalize_name(player_name))
 
         if pos:
             normalized_auto_name = normalize_name(player_name)
             current_team.add_player(normalized_auto_name, pos, draft_obj.player_bye(normalized_auto_name))
-            session_state["current_pick_num"] += 1
+            cls._advance_clock(session_state)
             logging.info(f"Auto-drafting: {player_name} ({pos})")
             cls._calculate_and_store_vona(session_state)
             return {

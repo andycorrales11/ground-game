@@ -30,6 +30,16 @@ class DraftSettings(BaseModel):
     scoring: Dict[str, float] | None = None
     roster: Dict[str, int] | None = None
 
+    # The first round that runs backwards. 2 is a plain snake and is the default;
+    # a league that drafts its first three rounds in order and snakes from the
+    # fourth sends 4. Simulation only -- a live draft's order comes from Sleeper.
+    snake_from: int | None = None
+
+    # Whether to apply data/keepers.json and data/trades.json. On by default,
+    # since a league that has those files wants them in every draft it runs; turn
+    # it off for a clean mock against the same board.
+    use_keepers: bool = True
+
 class PlayerPick(BaseModel):
     player_name: str
 
@@ -65,6 +75,8 @@ async def start_draft(settings: DraftSettings):
         order=settings.order,
         scoring=settings.scoring,
         roster=settings.roster,
+        snake_from=settings.snake_from,
+        use_keepers=settings.use_keepers,
     )
     if "error" in result:
         return JSONResponse(content=result, status_code=400)
@@ -117,6 +129,8 @@ async def start_draft_helper(settings: DraftSettings):
         order=settings.order,
         scoring=settings.scoring,
         roster=settings.roster,
+        snake_from=settings.snake_from,
+        use_keepers=settings.use_keepers,
     )
     if "error" in result:
         return JSONResponse(content=result, status_code=400)

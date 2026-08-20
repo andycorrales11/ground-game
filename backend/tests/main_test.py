@@ -39,6 +39,9 @@ class TestMainAPI(unittest.TestCase):
             # existed.
             scoring=None,
             roster=None,
+            # A plain snake, and the league's keeper files if it has any.
+            snake_from=None,
+            use_keepers=True,
         )
 
     @patch('backend.services.draft_manager_service.DraftManagerService.initialize_draft')

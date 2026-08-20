@@ -12,7 +12,8 @@ from backend import config
 from backend.services.draft import Draft, Team
 from backend.services.draft_manager_service import DraftManagerService as DMS
 from backend.services.vbd_service import WaitingCost
-from backend.services.draft_service import get_user_picks
+from backend.draft_order import DraftOrder, KeptPlayer, PickBook
+from backend import keepers as keeper_files
 from backend.tests.boards import make_board
 
 
@@ -29,11 +30,13 @@ def session():
     """A simulation session at pick 1, wired up the way initialize_draft wires one."""
     board = make_board()
     draft_obj = Draft(board.copy(), 'PPR', TEAMS, 15, order='snake')
+    pick_book = PickBook(DraftOrder(TEAMS, 15))
     state = {
         "draft_obj": draft_obj,
         "teams_list": [Team() for _ in range(TEAMS)],
         "user_pick_slot": 1,
         "user_picks_simulation": [1, 24, 25, 48],
+        "pick_book": pick_book,
         "draft_id": None,
         "non_interactive": True,
         "current_pick_num": 0,
@@ -128,11 +131,13 @@ def short_session():
     board = make_board()
     slots = config.roster_slots(SMALL_ROUNDS)
     draft_obj = Draft(board.copy(), 'PPR', SMALL_TEAMS, SMALL_ROUNDS, roster=slots, order='snake')
+    pick_book = PickBook(DraftOrder(SMALL_TEAMS, SMALL_ROUNDS))
     state = {
         "draft_obj": draft_obj,
         "teams_list": [Team(slots) for _ in range(SMALL_TEAMS)],
         "user_pick_slot": 1,
-        "user_picks_simulation": get_user_picks(1, 'snake', SMALL_TEAMS, SMALL_ROUNDS),
+        "user_picks_simulation": pick_book.picks_for(0),
+        "pick_book": pick_book,
         "draft_id": None,
         "non_interactive": True,
         "current_pick_num": 0,
@@ -299,8 +304,10 @@ def _captured_span(monkeypatch, state, current_pick_num):
     """The picks_to_simulate _calculate_and_store_vona works out for a given pick."""
     seen = {}
 
-    def fake_board(available, draft_obj, teams_list, picks_to_simulate, current_pick):
+    def fake_board(available, draft_obj, teams_list, picks_to_simulate, current_pick,
+                   pick_owners=None):
         seen["picks"] = picks_to_simulate
+        seen["owners"] = pick_owners
         return WaitingCost({}, {})
 
     monkeypatch.setattr(
@@ -365,3 +372,168 @@ def test_state_carries_vona_off_your_turn(session):
 
     assert any(player["VONA"] > 0 for player in players)
     assert any(player["GONE"] > 0 for player in players)
+
+
+# --- keepers and traded picks ------------------------------------------------
+#
+# The session-level half of the pick book. draft_order_test covers the book
+# itself; these cover the service actually reading it, which is where the old
+# snake arithmetic used to be and where a wrong answer means a player lands on
+# somebody else's roster.
+
+KEEPER_TEAMS = 4
+KEEPER_ROUNDS = 3
+
+
+def _keeper_session(trades=(), keepers=(), snake_from=2):
+    """A small simulation session with a pick book, wired as initialize_draft does."""
+    board = make_board()
+    slots = config.roster_slots(KEEPER_ROUNDS)
+    draft_obj = Draft(board.copy(), 'PPR', KEEPER_TEAMS, KEEPER_ROUNDS,
+                      roster=slots, order='snake')
+    teams_list = [Team(slots) for _ in range(KEEPER_TEAMS)]
+
+    order = DraftOrder(KEEPER_TEAMS, KEEPER_ROUNDS, snake_from)
+    book = keeper_files.LeagueBook(keepers=list(keepers), trades=list(trades))
+    pick_book = keeper_files.build_pick_book(
+        order, book, dict(zip(board['normalized_name'], board['display_name']))
+    )
+    DMS._seat_keepers(draft_obj, teams_list, pick_book)
+
+    state = {
+        "draft_obj": draft_obj,
+        "teams_list": teams_list,
+        "user_pick_slot": 1,
+        "user_picks_simulation": pick_book.picks_for(0),
+        "pick_book": pick_book,
+        "draft_id": None,
+        "non_interactive": True,
+        "current_pick_num": pick_book.next_open_pick(0),
+        "original_big_board": board.copy(),
+        "picks_order": [],
+        "slot_to_roster_id": {},
+        "vona_data": {},
+    }
+    session_id = "test-keeper-session"
+    DMS._active_draft_sessions[session_id] = state
+    return session_id, state
+
+
+@pytest.fixture
+def keeper_session():
+    session_id, state = _keeper_session(
+        keepers=[{"player": "RB1", "round": 1, "pick": 1},
+                 {"player": "WR1", "round": 1, "pick": 2}],
+        trades=[{"round": 2, "pick": 3, "traded_to": 1}],
+    )
+    yield session_id, state
+    DMS._active_draft_sessions.pop(session_id, None)
+
+
+def test_the_draft_opens_past_its_keepers(keeper_session):
+    """
+    With the first two picks kept, the draft starts on pick three. Opening on a
+    kept pick would sit there waiting for a pick nobody makes.
+    """
+    _, state = keeper_session
+    assert state["current_pick_num"] == 2
+
+
+def test_kept_players_are_off_the_board_from_the_start(keeper_session):
+    """
+    All of them at once, not each when its pick comes round -- everyone knows who
+    was kept, so no valuation should ever have seen them available.
+    """
+    _, state = keeper_session
+    available = set(state["draft_obj"].get_available_players()['normalized_name'])
+
+    assert 'rb1' not in available
+    assert 'wr1' not in available
+
+
+def test_a_keeper_is_on_the_roster_that_kept_him(keeper_session):
+    _, state = keeper_session
+
+    assert 'rb1' in state["teams_list"][0].roster.values()
+    assert 'wr1' in state["teams_list"][1].roster.values()
+    assert state["teams_list"][0].picks_made == 1
+
+
+def test_the_clock_follows_a_traded_pick(keeper_session):
+    """Seat 3's round-two pick belongs to seat 1, and only the book knows that."""
+    _, state = keeper_session
+    order = state["pick_book"].order
+    state["current_pick_num"] = order.pick_index(2, 3)
+
+    assert DMS._team_on_clock(state) == 0
+
+
+def test_a_cpu_pick_lands_on_the_team_that_owns_the_pick(keeper_session):
+    """
+    End to end through process_cpu_pick: the player has to join the roster of
+    whoever holds the pick, not whoever sits in that seat.
+    """
+    session_id, state = keeper_session
+    order = state["pick_book"].order
+    state["current_pick_num"] = order.pick_index(2, 3)
+    before = state["teams_list"][0].picks_made
+
+    result = DMS.process_cpu_pick(session_id)
+
+    assert "error" not in result
+    assert state["teams_list"][0].picks_made == before + 1
+
+
+def test_the_clock_steps_over_a_keeper_after_a_pick(keeper_session):
+    """The skip has to happen on the way out of a pick, not only at startup."""
+    session_id, state = keeper_session
+    order = state["pick_book"].order
+
+    # Keep the pick immediately after the one on the clock, then make that pick.
+    state["pick_book"] = state["pick_book"].with_keepers([
+        KeptPlayer("TE1", "te1", order.pick_index(1, 4), 3),
+    ])
+    state["current_pick_num"] = order.pick_index(1, 3)
+
+    DMS.process_cpu_pick(session_id)
+
+    # Seat 3 picks, seat 4's round-one pick is kept and drops out -- and because
+    # round two reverses, the next live pick is seat 4's again at the turn.
+    assert state["current_pick_num"] == order.pick_index(2, 4)
+
+
+def test_the_vona_span_skips_kept_picks(monkeypatch, keeper_session):
+    """
+    A kept pick in the span is already made. Simulating it would take a player
+    off the board who was never going to be taken, and overstate what waiting
+    costs.
+    """
+    _, state = keeper_session
+    order = state["pick_book"].order
+
+    # Seat 4 keeps its round-two pick, which sits inside the span below.
+    state["pick_book"] = state["pick_book"].with_keepers([
+        KeptPlayer("TE1", "te1", order.pick_index(2, 4), 3),
+    ])
+    state["user_picks_simulation"] = state["pick_book"].picks_for(0)
+
+    seen = {}
+
+    def fake_board(available, draft_obj, teams_list, picks_to_simulate, current_pick,
+                   pick_owners=None):
+        seen["picks"] = picks_to_simulate
+        seen["owners"] = pick_owners
+        return WaitingCost({}, {})
+
+    monkeypatch.setattr(
+        "backend.services.draft_manager_service.calculate_vona_board", fake_board
+    )
+    state["current_pick_num"] = order.pick_index(1, 4)
+    DMS._calculate_and_store_vona(state)
+
+    # Between seat 4's round-one pick and the user's next turn lie exactly two
+    # picks, and seat 4's round-two one is kept. So one pick gets simulated, not
+    # two -- simulating the kept one would take a player off the board who was
+    # never going anywhere and overstate what waiting costs.
+    assert seen["picks"] == 1
+    assert seen["owners"] == [3]

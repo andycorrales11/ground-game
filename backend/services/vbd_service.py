@@ -109,11 +109,17 @@ def simulate_to_next_turn(
     teams_list: list[Team],
     picks_to_simulate: int,
     current_pick: int,
+    pick_owners: list[int] | None = None,
 ) -> pd.DataFrame:
     """
     Plays out the CPU picks between now and the user's next turn.
 
     Returns the pool that survives. The caller's Draft and Teams are left untouched.
+
+    `pick_owners` is the actual sequence of teams picking, which the caller knows
+    and this cannot derive: a pick may have been traded, and a pick already spent
+    on a keeper is not made at all. Without it the order falls back to snake
+    arithmetic, which is right for any league that has neither.
     """
     draft_sim = Draft(
         draft_obj.players.copy(), draft_obj.format, draft_obj.teams,
@@ -130,13 +136,16 @@ def simulate_to_next_turn(
     draft_order = draft_obj.order
 
     for i in range(picks_to_simulate):
-        pick_num = current_pick + i + 1
-        current_round = (pick_num - 1) // teams + 1
-
-        if draft_order == 'snake' and current_round % 2 == 0:
-            team_index = teams - ((pick_num - 1) % teams) - 1
+        if pick_owners is not None:
+            team_index = pick_owners[i]
         else:
-            team_index = (pick_num - 1) % teams
+            pick_num = current_pick + i + 1
+            current_round = (pick_num - 1) // teams + 1
+
+            if draft_order == 'snake' and current_round % 2 == 0:
+                team_index = teams - ((pick_num - 1) % teams) - 1
+            else:
+                team_index = (pick_num - 1) % teams
 
         available_for_cpu = draft_sim.get_available_players()
         if available_for_cpu.empty:
@@ -190,6 +199,7 @@ def calculate_vona_board(
     picks_to_simulate: int,
     current_pick: int,
     runs: int = VONA_SIMULATION_RUNS,
+    pick_owners: list[int] | None = None,
 ) -> WaitingCost:
     """
     What waiting costs you, per player, from one shared set of forward simulations.
@@ -249,7 +259,7 @@ def calculate_vona_board(
 
     for _ in range(max(1, runs)):
         survivors = simulate_to_next_turn(
-            draft_obj, teams_list, picks_to_simulate, current_pick
+            draft_obj, teams_list, picks_to_simulate, current_pick, pick_owners
         )
         if survivors.empty:
             continue
